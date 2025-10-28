@@ -33,6 +33,9 @@ TRADE_CONFIG = {
     'timeframe': '15m',  # 使用15分钟K线
     'test_mode': False,  # 测试模式
     'data_points': 96,  # 24小时数据（96根15分钟K线）
+    # 账户/交易模式
+    'td_mode': 'cross',           # 订单交易模式：'cross' 或 'isolated'
+    'hedge_mode': True,           # 是否启用双向持仓（多空同时）
     'analysis_periods': {
         'short_term': 20,  # 短期均线
         'medium_term': 50,  # 中期均线
@@ -94,12 +97,38 @@ def setup_exchange():
         
         print(f"📏 最小交易量: {TRADE_CONFIG['min_amount']} 张")
         
+        # 设置账户模式：双向持仓 + 保证金模式
+        try:
+            if TRADE_CONFIG.get('hedge_mode', True):
+                exchange.set_position_mode(True)  # 启用双向持仓
+                print("✅ 已启用双向持仓模式 (long/short)")
+            else:
+                exchange.set_position_mode(False)
+                print("✅ 已启用单向持仓模式")
+        except Exception as e:
+            print(f"⚠️ 设置持仓模式失败: {e}")
+
+        try:
+            exchange.set_margin_mode(TRADE_CONFIG.get('td_mode', 'cross'), TRADE_CONFIG['symbol'])
+            print(f"✅ 已设置保证金模式: {TRADE_CONFIG.get('td_mode', 'cross')}")
+        except Exception as e:
+            print(f"⚠️ 设置保证金模式失败: {e}")
+
         # OKX设置杠杆（使用默认5倍作为初始杠杆）
         initial_leverage = 5
-        exchange.set_leverage(
-            initial_leverage,
-            TRADE_CONFIG['symbol']
-        )
+        try:
+            # OKX设置杠杆需要指定保证金模式
+            exchange.set_leverage(
+                initial_leverage,
+                TRADE_CONFIG['symbol'],
+                {'mgnMode': TRADE_CONFIG.get('td_mode', 'cross')}
+            )
+        except Exception:
+            # 兼容旧版ccxt签名
+            exchange.set_leverage(
+                initial_leverage,
+                TRADE_CONFIG['symbol']
+            )
         print(f"设置初始杠杆倍数: {initial_leverage}x（后续将根据AI动态调整）")
 
         # 获取余额
@@ -792,7 +821,11 @@ def execute_trade(signal_data, price_data):
         # 🆕 动态设置杠杆
         print(f"🔧 设置动态杠杆: {dynamic_leverage}倍")
         try:
-            exchange.set_leverage(dynamic_leverage, TRADE_CONFIG['symbol'])
+            exchange.set_leverage(
+                dynamic_leverage,
+                TRADE_CONFIG['symbol'],
+                {'mgnMode': TRADE_CONFIG.get('td_mode', 'cross')}
+            )
             print(f"✅ 杠杆设置成功: {dynamic_leverage}倍")
         except Exception as e:
             print(f"⚠️ 杠杆设置失败，使用默认杠杆: {e}")
@@ -814,12 +847,19 @@ def execute_trade(signal_data, price_data):
                 # 平空仓
                 exchange.create_market_order(
                     TRADE_CONFIG['symbol'], 'buy', current_position['size'], 
-                    None, None, {'reduceOnly': True}
+                    None, None, {
+                        'reduceOnly': True,
+                        'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
+                        'posSide': 'short'
+                    }
                 )
                 time.sleep(1)
                 # 开多仓
                 exchange.create_market_order(
-                    TRADE_CONFIG['symbol'], 'buy', order_amount
+                    TRADE_CONFIG['symbol'], 'buy', order_amount, None, None, {
+                        'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
+                        'posSide': 'long'
+                    }
                 )
             elif current_position and current_position['side'] == 'long':
                 print("已有多头持仓，保持现状")
@@ -827,7 +867,10 @@ def execute_trade(signal_data, price_data):
                 # 无持仓时开多仓
                 print("开多仓...")
                 exchange.create_market_order(
-                    TRADE_CONFIG['symbol'], 'buy', order_amount
+                    TRADE_CONFIG['symbol'], 'buy', order_amount, None, None, {
+                        'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
+                        'posSide': 'long'
+                    }
                 )
 
         elif signal_data['signal'] == 'SELL':
@@ -836,12 +879,19 @@ def execute_trade(signal_data, price_data):
                 # 平多仓
                 exchange.create_market_order(
                     TRADE_CONFIG['symbol'], 'sell', current_position['size'],
-                    None, None, {'reduceOnly': True}
+                    None, None, {
+                        'reduceOnly': True,
+                        'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
+                        'posSide': 'long'
+                    }
                 )
                 time.sleep(1)
                 # 开空仓
                 exchange.create_market_order(
-                    TRADE_CONFIG['symbol'], 'sell', order_amount
+                    TRADE_CONFIG['symbol'], 'sell', order_amount, None, None, {
+                        'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
+                        'posSide': 'short'
+                    }
                 )
             elif current_position and current_position['side'] == 'short':
                 print("已有空头持仓，保持现状")
@@ -849,7 +899,10 @@ def execute_trade(signal_data, price_data):
                 # 无持仓时开空仓
                 print("开空仓...")
                 exchange.create_market_order(
-                    TRADE_CONFIG['symbol'], 'sell', order_amount
+                    TRADE_CONFIG['symbol'], 'sell', order_amount, None, None, {
+                        'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
+                        'posSide': 'short'
+                    }
                 )
 
         print("订单执行成功")
