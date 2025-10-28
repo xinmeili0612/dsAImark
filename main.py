@@ -27,11 +27,9 @@ exchange = ccxt.okx({
     },
 })
 
-# 交易参数配置 - 结合两个版本的优点
+# 交易参数配置 - AI动态杠杆版本（适配100USDT本金）
 TRADE_CONFIG = {
     'symbol': 'BTC/USDT:USDT',  # OKX的合约符号格式
-    'amount': 0.01,  # 交易数量 (合约张数，最小下单数量为0.01张)
-    'leverage': 5,  # 杠杆倍数
     'timeframe': '15m',  # 使用15分钟K线
     'test_mode': False,  # 测试模式
     'data_points': 96,  # 24小时数据（96根15分钟K线）
@@ -39,6 +37,36 @@ TRADE_CONFIG = {
         'short_term': 20,  # 短期均线
         'medium_term': 50,  # 中期均线
         'long_term': 96  # 长期趋势
+    },
+    # AI智能仓位管理（100USDT本金优化）
+    'position_management': {
+        'enable_intelligent_position': True,  # 启用智能仓位
+        'base_usdt_amount': 25,  # 基础USDT投入（100U本金，保守25U）
+        'high_confidence_multiplier': 2.0,  # 高信心时50 USDT
+        'medium_confidence_multiplier': 1.0,  # 中信心时25 USDT
+        'low_confidence_multiplier': 0.6,  # 低信心时15 USDT
+        'max_position_ratio': 0.8,  # 最多使用80%账户余额
+        'trend_strength_multiplier': 1.3  # 强势趋势时增加30%
+    },
+    # AI动态杠杆配置
+    'dynamic_leverage': {
+        'enable_dynamic_leverage': True,  # 启用AI动态杠杆
+        'leverage_ranges': {
+            'HIGH': [6, 8],      # 高信心：6-8倍杠杆
+            'MEDIUM': [4, 6],    # 中信心：4-6倍杠杆
+            'LOW': [2, 4]        # 低信心：2-4倍杠杆
+        },
+        'volatility_adjustment': {
+            'low_volatility': 1.2,   # 低波动时+20%杠杆
+            'high_volatility': 0.8   # 高波动时-20%杠杆
+        },
+        'rsi_adjustment': {
+            'oversold': 1.1,     # RSI<30时+10%杠杆
+            'overbought': 0.9,   # RSI>70时-10%杠杆
+            'neutral': 1.0       # RSI中性时不变
+        },
+        'max_leverage': 8,       # 最大杠杆限制
+        'min_leverage': 2        # 最小杠杆限制
     }
 }
 
@@ -51,7 +79,22 @@ position = None
 def setup_exchange():
     """设置交易所参数"""
     try:
-        # OKX设置杠杆（OKX不需要额外的mgnMode参数）
+        # 首先获取合约规格信息
+        print("🔍 获取BTC合约规格...")
+        markets = exchange.load_markets()
+        btc_market = markets[TRADE_CONFIG['symbol']]
+        
+        # 获取合约乘数
+        contract_size = float(btc_market['contractSize'])
+        print(f"✅ 合约规格: 1张 = {contract_size} BTC")
+        
+        # 存储合约规格到全局配置
+        TRADE_CONFIG['contract_size'] = contract_size
+        TRADE_CONFIG['min_amount'] = btc_market['limits']['amount']['min']
+        
+        print(f"📏 最小交易量: {TRADE_CONFIG['min_amount']} 张")
+        
+        # OKX设置杠杆
         exchange.set_leverage(
             TRADE_CONFIG['leverage'],
             TRADE_CONFIG['symbol']
@@ -66,7 +109,168 @@ def setup_exchange():
         return True
     except Exception as e:
         print(f"交易所设置失败: {e}")
+        import traceback
+        traceback.print_exc()
         return False
+
+
+def calculate_dynamic_leverage(signal_data, price_data):
+    """AI动态杠杆计算函数"""
+    config = TRADE_CONFIG['dynamic_leverage']
+    
+    # 如果禁用动态杠杆，使用固定杠杆
+    if not config.get('enable_dynamic_leverage', True):
+        return 5  # 默认5倍杠杆
+    
+    try:
+        # 1. 根据信号信心确定基础杠杆范围
+        confidence = signal_data.get('confidence', 'MEDIUM')
+        leverage_range = config['leverage_ranges'].get(confidence, [4, 6])
+        base_leverage = (leverage_range[0] + leverage_range[1]) / 2  # 取中值
+        
+        print(f"📊 基础杠杆计算:")
+        print(f"   - 信号信心: {confidence}")
+        print(f"   - 杠杆范围: {leverage_range[0]}-{leverage_range[1]}倍")
+        print(f"   - 基础杠杆: {base_leverage:.1f}倍")
+        
+        # 2. 根据市场波动性调整
+        volatility_multiplier = 1.0
+        if 'technical_data' in price_data:
+            # 使用布林带宽度判断波动性
+            bb_upper = price_data['technical_data'].get('bb_upper', 0)
+            bb_lower = price_data['technical_data'].get('bb_lower', 0)
+            bb_width = (bb_upper - bb_lower) / price_data['price'] if price_data['price'] > 0 else 0
+            
+            if bb_width < 0.02:  # 低波动
+                volatility_multiplier = config['volatility_adjustment']['low_volatility']
+                print(f"   - 波动性: 低 (BB宽度: {bb_width:.3f})")
+            elif bb_width > 0.05:  # 高波动
+                volatility_multiplier = config['volatility_adjustment']['high_volatility']
+                print(f"   - 波动性: 高 (BB宽度: {bb_width:.3f})")
+            else:
+                print(f"   - 波动性: 中等 (BB宽度: {bb_width:.3f})")
+        
+        # 3. 根据RSI状态调整
+        rsi_multiplier = 1.0
+        if 'technical_data' in price_data:
+            rsi = price_data['technical_data'].get('rsi', 50)
+            if rsi < 30:
+                rsi_multiplier = config['rsi_adjustment']['oversold']
+                print(f"   - RSI状态: 超卖 ({rsi:.1f})")
+            elif rsi > 70:
+                rsi_multiplier = config['rsi_adjustment']['overbought']
+                print(f"   - RSI状态: 超买 ({rsi:.1f})")
+            else:
+                print(f"   - RSI状态: 中性 ({rsi:.1f})")
+        
+        # 4. 计算最终杠杆
+        final_leverage = base_leverage * volatility_multiplier * rsi_multiplier
+        
+        # 5. 应用杠杆限制
+        max_leverage = config['max_leverage']
+        min_leverage = config['min_leverage']
+        final_leverage = max(min_leverage, min(max_leverage, final_leverage))
+        
+        print(f"📈 杠杆调整详情:")
+        print(f"   - 波动性倍数: {volatility_multiplier}")
+        print(f"   - RSI倍数: {rsi_multiplier}")
+        print(f"   - 调整后杠杆: {final_leverage:.1f}倍")
+        print(f"   - 最终杠杆: {final_leverage:.1f}倍 (限制: {min_leverage}-{max_leverage}倍)")
+        
+        return round(final_leverage, 1)
+        
+    except Exception as e:
+        print(f"❌ 动态杠杆计算失败，使用默认杠杆: {e}")
+        import traceback
+        traceback.print_exc()
+        return 5  # 默认5倍杠杆
+
+
+def calculate_intelligent_position(signal_data, price_data, current_position):
+    """计算智能仓位大小 - 基于USDT投入 + AI动态杠杆"""
+    config = TRADE_CONFIG['position_management']
+    
+    # 如果禁用智能仓位，使用固定仓位
+    if not config.get('enable_intelligent_position', True):
+        fixed_contracts = 0.01  # 固定仓位大小
+        print(f"🔧 智能仓位已禁用，使用固定仓位: {fixed_contracts} 张")
+        return fixed_contracts, 5  # 返回固定杠杆
+    
+    try:
+        # 🆕 1. 首先计算动态杠杆
+        dynamic_leverage = calculate_dynamic_leverage(signal_data, price_data)
+        
+        # 获取账户余额
+        balance = exchange.fetch_balance()
+        usdt_balance = balance['USDT']['free']
+        
+        # 基础USDT投入
+        base_usdt = config['base_usdt_amount']
+        print(f"💰 可用USDT余额: {usdt_balance:.2f}, 基础投入{base_usdt} USDT")
+        
+        # 根据信心程度调整
+        confidence_multiplier = {
+            'HIGH': config['high_confidence_multiplier'],
+            'MEDIUM': config['medium_confidence_multiplier'],
+            'LOW': config['low_confidence_multiplier']
+        }.get(signal_data.get('confidence', 'MEDIUM'), 1.0)
+        
+        # 根据趋势强度调整
+        trend = price_data.get('trend_analysis', {}).get('overall', '震荡整理')
+        if trend in ['强势上涨', '强势下跌']:
+            trend_multiplier = config['trend_strength_multiplier']
+        else:
+            trend_multiplier = 1.0
+        
+        # 根据RSI状态调整（超买超卖区域减仓）
+        rsi = price_data.get('technical_data', {}).get('rsi', 50)
+        if rsi > 75 or rsi < 25:
+            rsi_multiplier = 0.7
+        else:
+            rsi_multiplier = 1.0
+        
+        # 计算建议投入USDT金额
+        suggested_usdt = base_usdt * confidence_multiplier * trend_multiplier * rsi_multiplier
+        
+        # 风险管理：不超过总资金的指定比例
+        max_usdt = usdt_balance * config['max_position_ratio']
+        final_usdt = min(suggested_usdt, max_usdt)
+        
+        # 🆕 使用动态杠杆计算合约张数
+        # 公式：合约张数 = (投入USDT * 动态杠杆) / (当前价格 * 合约乘数)
+        contract_size = (final_usdt * dynamic_leverage) / (price_data['price'] * TRADE_CONFIG['contract_size'])
+        
+        print(f"📊 仓位计算详情:")
+        print(f"   - 基础USDT: {base_usdt}")
+        print(f"   - 信心倍数: {confidence_multiplier}")
+        print(f"   - 趋势倍数: {trend_multiplier}")
+        print(f"   - RSI倍数: {rsi_multiplier}")
+        print(f"   - 建议USDT: {suggested_usdt:.2f}")
+        print(f"   - 最终USDT: {final_usdt:.2f}")
+        print(f"   - 动态杠杆: {dynamic_leverage}倍")
+        print(f"   - 计算合约: {contract_size:.4f} 张")
+        
+        # 精度处理：OKX BTC合约最小交易单位为0.01张
+        contract_size = round(contract_size, 2)  # 保留2位小数
+        
+        # 确保最小交易量
+        min_contracts = TRADE_CONFIG.get('min_amount', 0.01)
+        if contract_size < min_contracts:
+            contract_size = min_contracts
+            print(f"⚠️ 仓位小于最小值，调整为: {contract_size} 张")
+        
+        print(f"🎯 最终仓位: {final_usdt:.2f} USDT → {contract_size:.2f} 张合约 (杠杆: {dynamic_leverage}倍)")
+        return contract_size, dynamic_leverage
+        
+    except Exception as e:
+        print(f"❌ 仓位计算失败，使用固定仓位: {e}")
+        import traceback
+        traceback.print_exc()
+        # 紧急备用计算
+        base_usdt = config['base_usdt_amount']
+        contract_size = (base_usdt * 5) / (  # 使用默认5倍杠杆
+                    price_data['price'] * TRADE_CONFIG.get('contract_size', 0.001))
+        return round(max(contract_size, TRADE_CONFIG.get('min_amount', 0.01)), 2), 5
 
 
 def calculate_technical_indicators(df):
@@ -579,11 +783,23 @@ def execute_trade(signal_data, price_data):
         return
 
     try:
-        # 获取账户余额
+        # 🆕 使用智能仓位计算（包含动态杠杆）
+        order_amount, dynamic_leverage = calculate_intelligent_position(signal_data, price_data, current_position)
+        
+        # 🆕 动态设置杠杆
+        print(f"🔧 设置动态杠杆: {dynamic_leverage}倍")
+        try:
+            exchange.set_leverage(dynamic_leverage, TRADE_CONFIG['symbol'])
+            print(f"✅ 杠杆设置成功: {dynamic_leverage}倍")
+        except Exception as e:
+            print(f"⚠️ 杠杆设置失败，使用默认杠杆: {e}")
+            dynamic_leverage = 5  # 使用默认杠杆
+        
+        # 获取账户余额进行最终检查
         balance = exchange.fetch_balance()
         usdt_balance = balance['USDT']['free']
-        required_margin = price_data['price'] * TRADE_CONFIG['amount'] / TRADE_CONFIG['leverage']
-
+        required_margin = price_data['price'] * order_amount * TRADE_CONFIG['contract_size'] / dynamic_leverage
+        
         if required_margin > usdt_balance * 0.8:  # 使用不超过80%的余额
             print(f"⚠️ 保证金不足，跳过交易。需要: {required_margin:.2f} USDT, 可用: {usdt_balance:.2f} USDT")
             return
@@ -600,7 +816,7 @@ def execute_trade(signal_data, price_data):
                 time.sleep(1)
                 # 开多仓
                 exchange.create_market_order(
-                    TRADE_CONFIG['symbol'], 'buy', TRADE_CONFIG['amount']
+                    TRADE_CONFIG['symbol'], 'buy', order_amount
                 )
             elif current_position and current_position['side'] == 'long':
                 print("已有多头持仓，保持现状")
@@ -608,7 +824,7 @@ def execute_trade(signal_data, price_data):
                 # 无持仓时开多仓
                 print("开多仓...")
                 exchange.create_market_order(
-                    TRADE_CONFIG['symbol'], 'buy', TRADE_CONFIG['amount']
+                    TRADE_CONFIG['symbol'], 'buy', order_amount
                 )
 
         elif signal_data['signal'] == 'SELL':
@@ -622,7 +838,7 @@ def execute_trade(signal_data, price_data):
                 time.sleep(1)
                 # 开空仓
                 exchange.create_market_order(
-                    TRADE_CONFIG['symbol'], 'sell', TRADE_CONFIG['amount']
+                    TRADE_CONFIG['symbol'], 'sell', order_amount
                 )
             elif current_position and current_position['side'] == 'short':
                 print("已有空头持仓，保持现状")
@@ -630,7 +846,7 @@ def execute_trade(signal_data, price_data):
                 # 无持仓时开空仓
                 print("开空仓...")
                 exchange.create_market_order(
-                    TRADE_CONFIG['symbol'], 'sell', TRADE_CONFIG['amount']
+                    TRADE_CONFIG['symbol'], 'sell', order_amount
                 )
 
         print("订单执行成功")
