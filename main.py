@@ -30,7 +30,7 @@ exchange = ccxt.okx({
 # 交易参数配置 - 结合两个版本的优点
 TRADE_CONFIG = {
     'symbol': 'BTC/USDT:USDT',  # OKX的合约符号格式
-    'amount': 0.001,  # 交易数量 (BTC)
+    'amount': 0.01,  # 交易数量 (合约张数，最小下单数量为0.01张)
     'leverage': 5,  # 杠杆倍数
     'timeframe': '15m',  # 使用15分钟K线
     'test_mode': False,  # 测试模式
@@ -594,18 +594,13 @@ def execute_trade(signal_data, price_data):
                 print("平空仓并开多仓...")
                 # 平空仓
                 exchange.create_market_order(
-                    TRADE_CONFIG['symbol'],
-                    'buy',
-                    current_position['size'],
-                    params={'reduceOnly': True, 'tag': '60bb4a8d3416BCDE'}
+                    TRADE_CONFIG['symbol'], 'buy', current_position['size'], 
+                    None, None, {'reduceOnly': True}
                 )
                 time.sleep(1)
                 # 开多仓
                 exchange.create_market_order(
-                    TRADE_CONFIG['symbol'],
-                    'buy',
-                    TRADE_CONFIG['amount'],
-                    params={'tag': 'f1ee03b510d5SUDE'}
+                    TRADE_CONFIG['symbol'], 'buy', TRADE_CONFIG['amount']
                 )
             elif current_position and current_position['side'] == 'long':
                 print("已有多头持仓，保持现状")
@@ -613,10 +608,7 @@ def execute_trade(signal_data, price_data):
                 # 无持仓时开多仓
                 print("开多仓...")
                 exchange.create_market_order(
-                    TRADE_CONFIG['symbol'],
-                    'buy',
-                    TRADE_CONFIG['amount'],
-                    params={'tag': 'f1ee03b510d5SUDE'}
+                    TRADE_CONFIG['symbol'], 'buy', TRADE_CONFIG['amount']
                 )
 
         elif signal_data['signal'] == 'SELL':
@@ -624,18 +616,13 @@ def execute_trade(signal_data, price_data):
                 print("平多仓并开空仓...")
                 # 平多仓
                 exchange.create_market_order(
-                    TRADE_CONFIG['symbol'],
-                    'sell',
-                    current_position['size'],
-                    params={'reduceOnly': True, 'tag': 'f1ee03b510d5SUDE'}
+                    TRADE_CONFIG['symbol'], 'sell', current_position['size'],
+                    None, None, {'reduceOnly': True}
                 )
                 time.sleep(1)
                 # 开空仓
                 exchange.create_market_order(
-                    TRADE_CONFIG['symbol'],
-                    'sell',
-                    TRADE_CONFIG['amount'],
-                    params={'tag': 'f1ee03b510d5SUDE'}
+                    TRADE_CONFIG['symbol'], 'sell', TRADE_CONFIG['amount']
                 )
             elif current_position and current_position['side'] == 'short':
                 print("已有空头持仓，保持现状")
@@ -643,10 +630,7 @@ def execute_trade(signal_data, price_data):
                 # 无持仓时开空仓
                 print("开空仓...")
                 exchange.create_market_order(
-                    TRADE_CONFIG['symbol'],
-                    'sell',
-                    TRADE_CONFIG['amount'],
-                    params={'tag': 'f1ee03b510d5SUDE'}
+                    TRADE_CONFIG['symbol'], 'sell', TRADE_CONFIG['amount']
                 )
 
         print("订单执行成功")
