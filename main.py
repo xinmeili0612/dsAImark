@@ -94,12 +94,13 @@ def setup_exchange():
         
         print(f"📏 最小交易量: {TRADE_CONFIG['min_amount']} 张")
         
-        # OKX设置杠杆
+        # OKX设置杠杆（使用默认5倍作为初始杠杆）
+        initial_leverage = 5
         exchange.set_leverage(
-            TRADE_CONFIG['leverage'],
+            initial_leverage,
             TRADE_CONFIG['symbol']
         )
-        print(f"设置杠杆倍数: {TRADE_CONFIG['leverage']}x")
+        print(f"设置初始杠杆倍数: {initial_leverage}x（后续将根据AI动态调整）")
 
         # 获取余额
         balance = exchange.fetch_balance()
@@ -503,7 +504,7 @@ def get_current_position():
                         'size': contracts,
                         'entry_price': float(pos['entryPrice']) if pos['entryPrice'] else 0,
                         'unrealized_pnl': float(pos['unrealizedPnl']) if pos['unrealizedPnl'] else 0,
-                        'leverage': float(pos['leverage']) if pos['leverage'] else TRADE_CONFIG['leverage'],
+                        'leverage': float(pos['leverage']) if pos['leverage'] else 5,  # 默认5倍杠杆
                         'symbol': pos['symbol']
                     }
 
@@ -571,6 +572,8 @@ def analyze_with_deepseek(price_data):
         print("❌ price_data 为空或无效，使用备用信号")
         return create_fallback_signal({'price': 0})
 
+    print("🤖 开始调用DeepSeek API分析市场...")
+    
     # 生成技术分析文本
     technical_analysis = generate_technical_analysis_text(price_data)
 
