@@ -847,7 +847,7 @@ def execute_trade(signal_data, price_data):
                 # 平空仓
                 exchange.create_market_order(
                     TRADE_CONFIG['symbol'], 'buy', current_position['size'], 
-                    None, None, {
+                    None, {
                         'reduceOnly': True,
                         'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
                         'posSide': 'short'
@@ -856,7 +856,7 @@ def execute_trade(signal_data, price_data):
                 time.sleep(1)
                 # 开多仓
                 exchange.create_market_order(
-                    TRADE_CONFIG['symbol'], 'buy', order_amount, None, None, {
+                    TRADE_CONFIG['symbol'], 'buy', order_amount, None, {
                         'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
                         'posSide': 'long'
                     }
@@ -867,7 +867,7 @@ def execute_trade(signal_data, price_data):
                 # 无持仓时开多仓
                 print("开多仓...")
                 exchange.create_market_order(
-                    TRADE_CONFIG['symbol'], 'buy', order_amount, None, None, {
+                    TRADE_CONFIG['symbol'], 'buy', order_amount, None, {
                         'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
                         'posSide': 'long'
                     }
@@ -879,7 +879,7 @@ def execute_trade(signal_data, price_data):
                 # 平多仓
                 exchange.create_market_order(
                     TRADE_CONFIG['symbol'], 'sell', current_position['size'],
-                    None, None, {
+                    None, {
                         'reduceOnly': True,
                         'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
                         'posSide': 'long'
@@ -888,7 +888,7 @@ def execute_trade(signal_data, price_data):
                 time.sleep(1)
                 # 开空仓
                 exchange.create_market_order(
-                    TRADE_CONFIG['symbol'], 'sell', order_amount, None, None, {
+                    TRADE_CONFIG['symbol'], 'sell', order_amount, None, {
                         'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
                         'posSide': 'short'
                     }
@@ -899,7 +899,7 @@ def execute_trade(signal_data, price_data):
                 # 无持仓时开空仓
                 print("开空仓...")
                 exchange.create_market_order(
-                    TRADE_CONFIG['symbol'], 'sell', order_amount, None, None, {
+                    TRADE_CONFIG['symbol'], 'sell', order_amount, None, {
                         'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
                         'posSide': 'short'
                     }
