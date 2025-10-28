@@ -639,7 +639,7 @@ def analyze_with_deepseek(price_data):
     position_text = "无持仓" if not current_pos else f"{current_pos['side']}仓, 数量: {current_pos['size']}, 盈亏: {current_pos['unrealized_pnl']:.2f}USDT"
 
     prompt = f"""
-    你是一个专业的加密货币交易分析师。请基于以下BTC/USDT {TRADE_CONFIG['timeframe']}周期数据进行分析：
+    你是一位拥有15年经验的顶级加密货币量化交易员，你拥有INTJ 人格特征，是天生的系统构建者和长期规划者。并专精于BTC/USDT合约交易,善于洞察市场潜在机会吗，更懂得提前预知黑天鹅事件，并有效控制风险，目的是让资产最大化。请基于以下BTC/USDT {TRADE_CONFIG['timeframe']}周期数据进行分析：
 
     {kline_text}
 
@@ -698,7 +698,7 @@ def analyze_with_deepseek(price_data):
             model="deepseek-chat",
             messages=[
                 {"role": "system",
-                 "content": f"您是一位专业的交易员，专注于{TRADE_CONFIG['timeframe']}周期趋势分析。请结合K线形态和技术指标做出判断，并严格遵循JSON格式要求。"},
+                 "content": f"您是一位拥有15年经验的顶级加密货币量化交易员，你拥有INTJ 人格特征，是天生的系统构建者和长期规划者。并专注于{TRADE_CONFIG['timeframe']}周期趋势分析。请结合K线形态和技术指标做出判断，并严格遵循JSON格式要求。"},
                 {"role": "user", "content": prompt}
             ],
             stream=False,
