@@ -1032,28 +1032,70 @@ def execute_trade(signal_data, price_data):
 
             print("开多仓并设置止盈止损...")
             
-            # 🆕 构建带止盈止损的参数
+            # 🆕 构建带止盈止损的参数（修复OKX API格式）
             params = {
                 'posSide': 'long',
                 'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
-                'slTriggerPx': f"{validated_sl:.2f}",      # 止损触发价格
-                'tpTriggerPx': f"{validated_tp:.2f}",       # 止盈触发价格
-                'slTriggerPxType': 'last',                  # 触发类型：最新成交价
-                'tpTriggerPxType': 'last'
+                'slTriggerPx': str(round(validated_sl, 2)),      # 止损触发价格（字符串格式）
+                'tpTriggerPx': str(round(validated_tp, 2)),       # 止盈触发价格（字符串格式）
+                'slTriggerPxType': 'last',                        # 触发类型：最新成交价
+                'tpTriggerPxType': 'last',
+                'ordType': 'market'                               # 明确指定订单类型
             }
             
             try:
+                print(f"🔧 尝试下单参数: {params}")
                 order = exchange.create_market_order(TRADE_CONFIG['symbol'], 'buy', order_amount, None, params)
                 print(f"✅ 多单及止盈止损设置成功: {order.get('id', 'N/A')}")
             except Exception as e:
                 print(f"❌ 带止盈止损下单失败: {e}")
                 print("尝试不带止盈止损下单...")
                 # 备用方案：不带止盈止损下单
-                exchange.create_market_order(TRADE_CONFIG['symbol'], 'buy', order_amount, None, {
+                basic_params = {
                     'posSide': 'long',
-                    'tdMode': TRADE_CONFIG.get('td_mode', 'cross')
-                })
-                print("✅ 多单下单成功（未设置止盈止损）")
+                    'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
+                    'ordType': 'market'
+                }
+                try:
+                    order = exchange.create_market_order(TRADE_CONFIG['symbol'], 'buy', order_amount, None, basic_params)
+                    print(f"✅ 多单下单成功（未设置止盈止损）: {order.get('id', 'N/A')}")
+                    
+                    # 尝试单独设置止盈止损
+                    print("🔄 尝试单独设置止盈止损...")
+                    try:
+                        # 设置止损
+                        sl_order = exchange.create_order(
+                            TRADE_CONFIG['symbol'], 'market', 'sell', order_amount, None, {
+                                'posSide': 'long',
+                                'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
+                                'ordType': 'conditional',
+                                'triggerPx': str(round(validated_sl, 2)),
+                                'triggerPxType': 'last',
+                                'reduceOnly': True
+                            }
+                        )
+                        print(f"✅ 止损订单设置成功: {sl_order.get('id', 'N/A')}")
+                    except Exception as sl_e:
+                        print(f"⚠️ 止损订单设置失败: {sl_e}")
+                    
+                    try:
+                        # 设置止盈
+                        tp_order = exchange.create_order(
+                            TRADE_CONFIG['symbol'], 'market', 'sell', order_amount, None, {
+                                'posSide': 'long',
+                                'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
+                                'ordType': 'conditional',
+                                'triggerPx': str(round(validated_tp, 2)),
+                                'triggerPxType': 'last',
+                                'reduceOnly': True
+                            }
+                        )
+                        print(f"✅ 止盈订单设置成功: {tp_order.get('id', 'N/A')}")
+                    except Exception as tp_e:
+                        print(f"⚠️ 止盈订单设置失败: {tp_e}")
+                        
+                except Exception as basic_e:
+                    print(f"❌ 基础下单也失败: {basic_e}")
 
         elif signal_data['signal'] == 'SELL':
             side = 'short'
@@ -1087,28 +1129,70 @@ def execute_trade(signal_data, price_data):
             
             print("开空仓并设置止盈止损...")
             
-            # 🆕 构建带止盈止损的参数
+            # 🆕 构建带止盈止损的参数（修复OKX API格式）
             params = {
                 'posSide': 'short',
                 'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
-                'slTriggerPx': f"{validated_sl:.2f}",      # 止损触发价格
-                'tpTriggerPx': f"{validated_tp:.2f}",       # 止盈触发价格
-                'slTriggerPxType': 'last',                  # 触发类型：最新成交价
-                'tpTriggerPxType': 'last'
+                'slTriggerPx': str(round(validated_sl, 2)),      # 止损触发价格（字符串格式）
+                'tpTriggerPx': str(round(validated_tp, 2)),       # 止盈触发价格（字符串格式）
+                'slTriggerPxType': 'last',                        # 触发类型：最新成交价
+                'tpTriggerPxType': 'last',
+                'ordType': 'market'                               # 明确指定订单类型
             }
             
             try:
+                print(f"🔧 尝试下单参数: {params}")
                 order = exchange.create_market_order(TRADE_CONFIG['symbol'], 'sell', order_amount, None, params)
                 print(f"✅ 空单及止盈止损设置成功: {order.get('id', 'N/A')}")
             except Exception as e:
                 print(f"❌ 带止盈止损下单失败: {e}")
                 print("尝试不带止盈止损下单...")
                 # 备用方案：不带止盈止损下单
-                exchange.create_market_order(TRADE_CONFIG['symbol'], 'sell', order_amount, None, {
+                basic_params = {
                     'posSide': 'short',
-                    'tdMode': TRADE_CONFIG.get('td_mode', 'cross')
-                })
-                print("✅ 空单下单成功（未设置止盈止损）")
+                    'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
+                    'ordType': 'market'
+                }
+                try:
+                    order = exchange.create_market_order(TRADE_CONFIG['symbol'], 'sell', order_amount, None, basic_params)
+                    print(f"✅ 空单下单成功（未设置止盈止损）: {order.get('id', 'N/A')}")
+                    
+                    # 尝试单独设置止盈止损
+                    print("🔄 尝试单独设置止盈止损...")
+                    try:
+                        # 设置止损
+                        sl_order = exchange.create_order(
+                            TRADE_CONFIG['symbol'], 'market', 'buy', order_amount, None, {
+                                'posSide': 'short',
+                                'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
+                                'ordType': 'conditional',
+                                'triggerPx': str(round(validated_sl, 2)),
+                                'triggerPxType': 'last',
+                                'reduceOnly': True
+                            }
+                        )
+                        print(f"✅ 止损订单设置成功: {sl_order.get('id', 'N/A')}")
+                    except Exception as sl_e:
+                        print(f"⚠️ 止损订单设置失败: {sl_e}")
+                    
+                    try:
+                        # 设置止盈
+                        tp_order = exchange.create_order(
+                            TRADE_CONFIG['symbol'], 'market', 'buy', order_amount, None, {
+                                'posSide': 'short',
+                                'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
+                                'ordType': 'conditional',
+                                'triggerPx': str(round(validated_tp, 2)),
+                                'triggerPxType': 'last',
+                                'reduceOnly': True
+                            }
+                        )
+                        print(f"✅ 止盈订单设置成功: {tp_order.get('id', 'N/A')}")
+                    except Exception as tp_e:
+                        print(f"⚠️ 止盈订单设置失败: {tp_e}")
+                        
+                except Exception as basic_e:
+                    print(f"❌ 基础下单也失败: {basic_e}")
         
         elif signal_data['signal'] == 'HOLD':
             print("信号为HOLD，不执行任何交易")
