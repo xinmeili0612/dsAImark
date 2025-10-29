@@ -1031,35 +1031,35 @@ def execute_trade(signal_data, price_data):
         return
 
     try:
-        # 🆕 使用智能仓位计算（包含动态杠杆）
-        order_amount, dynamic_leverage = calculate_intelligent_position(signal_data, price_data, current_position)
-        
-        # 🆕 动态设置杠杆
-        print(f"🔧 设置动态杠杆: {dynamic_leverage}倍")
-        
-        # 🔧 使用安全杠杆设置函数
-        leverage_success = safe_set_leverage(
-            dynamic_leverage,
-            TRADE_CONFIG['symbol'],
-            TRADE_CONFIG.get('td_mode', 'cross')
-        )
-        
-        if not leverage_success:
-            print("⚠️ 杠杆设置失败，使用默认杠杆")
-            dynamic_leverage = 5  # 使用默认杠杆
-        
-        # 获取账户余额进行最终检查
-        balance = exchange.fetch_balance()
-        usdt_balance = balance['USDT']['free']
-        required_margin = price_data['price'] * order_amount * TRADE_CONFIG['contract_size'] / dynamic_leverage
-        
-        if required_margin > usdt_balance * 0.8:  # 使用不超过80%的余额
-            print(f"⚠️ 保证金不足，跳过交易。需要: {required_margin:.2f} USDT, 可用: {usdt_balance:.2f} USDT")
-            return
-
-        # 🆕 执行交易逻辑（集成止盈止损）
+        # 🔧 修复：先判断信号，再执行相关逻辑
         if signal_data['signal'] == 'BUY':
             side = 'long'
+            
+            # 🆕 使用智能仓位计算（包含动态杠杆）
+            order_amount, dynamic_leverage = calculate_intelligent_position(signal_data, price_data, current_position)
+            
+            # 🆕 动态设置杠杆
+            print(f"🔧 设置动态杠杆: {dynamic_leverage}倍")
+            
+            # 🔧 使用安全杠杆设置函数
+            leverage_success = safe_set_leverage(
+                dynamic_leverage,
+                TRADE_CONFIG['symbol'],
+                TRADE_CONFIG.get('td_mode', 'cross')
+            )
+            
+            if not leverage_success:
+                print("⚠️ 杠杆设置失败，使用默认杠杆")
+                dynamic_leverage = 5  # 使用默认杠杆
+            
+            # 获取账户余额进行最终检查
+            balance = exchange.fetch_balance()
+            usdt_balance = balance['USDT']['free']
+            required_margin = price_data['price'] * order_amount * TRADE_CONFIG['contract_size'] / dynamic_leverage
+            
+            if required_margin > usdt_balance * 0.8:  # 使用不超过80%的余额
+                print(f"⚠️ 保证金不足，跳过交易。需要: {required_margin:.2f} USDT, 可用: {usdt_balance:.2f} USDT")
+                return
             
             # 🆕 动态计算止盈止损
             stop_loss_price, take_profit_price = calculate_dynamic_stop_loss_take_profit(
@@ -1158,6 +1158,32 @@ def execute_trade(signal_data, price_data):
         elif signal_data['signal'] == 'SELL':
             side = 'short'
             
+            # 🆕 使用智能仓位计算（包含动态杠杆）
+            order_amount, dynamic_leverage = calculate_intelligent_position(signal_data, price_data, current_position)
+            
+            # 🆕 动态设置杠杆
+            print(f"🔧 设置动态杠杆: {dynamic_leverage}倍")
+            
+            # 🔧 使用安全杠杆设置函数
+            leverage_success = safe_set_leverage(
+                dynamic_leverage,
+                TRADE_CONFIG['symbol'],
+                TRADE_CONFIG.get('td_mode', 'cross')
+            )
+            
+            if not leverage_success:
+                print("⚠️ 杠杆设置失败，使用默认杠杆")
+                dynamic_leverage = 5  # 使用默认杠杆
+            
+            # 获取账户余额进行最终检查
+            balance = exchange.fetch_balance()
+            usdt_balance = balance['USDT']['free']
+            required_margin = price_data['price'] * order_amount * TRADE_CONFIG['contract_size'] / dynamic_leverage
+            
+            if required_margin > usdt_balance * 0.8:  # 使用不超过80%的余额
+                print(f"⚠️ 保证金不足，跳过交易。需要: {required_margin:.2f} USDT, 可用: {usdt_balance:.2f} USDT")
+                return
+            
             # 🆕 动态计算止盈止损
             stop_loss_price, take_profit_price = calculate_dynamic_stop_loss_take_profit(
                 signal_data, price_data, side, dynamic_leverage
@@ -1254,6 +1280,7 @@ def execute_trade(signal_data, price_data):
         
         elif signal_data['signal'] == 'HOLD':
             print("信号为HOLD，不执行任何交易")
+            return  # 🔧 修复：直接返回，不执行任何杠杆相关操作
 
         print("✅ 订单执行完成!")
         time.sleep(3)
