@@ -593,6 +593,113 @@ def safe_get_value(data, key, default=None):
         return default
 
 
+def validate_stop_loss_take_profit(signal_data, price_data, side):
+    """验证止盈止损价格的合理性"""
+    current_price = price_data['price']
+    stop_loss = signal_data.get('stop_loss', 0)
+    take_profit = signal_data.get('take_profit', 0)
+    
+    print(f"🔍 验证止盈止损价格:")
+    print(f"   - 当前价格: {current_price:.2f}")
+    print(f"   - 止损价格: {stop_loss:.2f}")
+    print(f"   - 止盈价格: {take_profit:.2f}")
+    print(f"   - 交易方向: {side}")
+    
+    # 基本验证
+    if stop_loss <= 0 or take_profit <= 0:
+        print("❌ 止盈止损价格无效")
+        return False, None, None
+    
+    # 多空方向验证
+    if side == 'long':
+        if stop_loss >= current_price:
+            print("❌ 多头止损价格不能高于当前价格")
+            return False, None, None
+        if take_profit <= current_price:
+            print("❌ 多头止盈价格不能低于当前价格")
+            return False, None, None
+    elif side == 'short':
+        if stop_loss <= current_price:
+            print("❌ 空头止损价格不能低于当前价格")
+            return False, None, None
+        if take_profit >= current_price:
+            print("❌ 空头止盈价格不能高于当前价格")
+            return False, None, None
+    
+    # 风险收益比验证
+    if side == 'long':
+        risk = current_price - stop_loss
+        reward = take_profit - current_price
+    else:
+        risk = stop_loss - current_price
+        reward = current_price - take_profit
+    
+    risk_reward_ratio = reward / risk if risk > 0 else 0
+    print(f"   - 风险: {risk:.2f}")
+    print(f"   - 收益: {reward:.2f}")
+    print(f"   - 风险收益比: {risk_reward_ratio:.2f}")
+    
+    if risk_reward_ratio < 1.0:  # 至少1:1的风险收益比
+        print(f"⚠️ 风险收益比过低: {risk_reward_ratio:.2f}")
+        # 可以选择继续或拒绝
+    
+    print("✅ 止盈止损价格验证通过")
+    return True, stop_loss, take_profit
+
+
+def calculate_dynamic_stop_loss_take_profit(signal_data, price_data, side, leverage):
+    """动态计算止盈止损点位"""
+    current_price = price_data['price']
+    confidence = signal_data.get('confidence', 'MEDIUM')
+    
+    # 基础止损比例（根据杠杆调整）
+    base_stop_loss_ratio = 0.02 / leverage  # 基础2%止损，根据杠杆调整
+    
+    # 根据信心程度调整止损比例
+    confidence_multiplier = {
+        'HIGH': 0.8,    # 高信心时止损更紧
+        'MEDIUM': 1.0,   # 中等信心
+        'LOW': 1.2       # 低信心时止损更宽
+    }.get(confidence, 1.0)
+    
+    # 根据市场波动调整
+    volatility_multiplier = 1.0
+    if 'technical_data' in price_data:
+        bb_upper = price_data['technical_data'].get('bb_upper', 0)
+        bb_lower = price_data['technical_data'].get('bb_lower', 0)
+        if bb_upper > 0 and bb_lower > 0:
+            bb_width = (bb_upper - bb_lower) / current_price
+            if bb_width > 0.05:  # 高波动
+                volatility_multiplier = 1.3
+            elif bb_width < 0.02:  # 低波动
+                volatility_multiplier = 0.8
+    
+    # 计算最终止损比例
+    final_stop_loss_ratio = base_stop_loss_ratio * confidence_multiplier * volatility_multiplier
+    
+    # 计算止盈比例（风险收益比1:2）
+    take_profit_ratio = final_stop_loss_ratio * 2
+    
+    # 计算具体价格
+    if side == 'long':
+        stop_loss_price = current_price * (1 - final_stop_loss_ratio)
+        take_profit_price = current_price * (1 + take_profit_ratio)
+    else:  # short
+        stop_loss_price = current_price * (1 + final_stop_loss_ratio)
+        take_profit_price = current_price * (1 - take_profit_ratio)
+    
+    print(f"📊 动态止盈止损计算:")
+    print(f"   - 基础止损比例: {base_stop_loss_ratio:.3f}")
+    print(f"   - 信心倍数: {confidence_multiplier}")
+    print(f"   - 波动倍数: {volatility_multiplier}")
+    print(f"   - 最终止损比例: {final_stop_loss_ratio:.3f}")
+    print(f"   - 止盈比例: {take_profit_ratio:.3f}")
+    print(f"   - 止损价格: {stop_loss_price:.2f}")
+    print(f"   - 止盈价格: {take_profit_price:.2f}")
+    
+    return stop_loss_price, take_profit_price
+
+
 def analyze_with_deepseek(price_data):
     """使用DeepSeek分析市场并生成交易信号（增强版）"""
 
@@ -639,7 +746,10 @@ def analyze_with_deepseek(price_data):
     position_text = "无持仓" if not current_pos else f"{current_pos['side']}仓, 数量: {current_pos['size']}, 盈亏: {current_pos['unrealized_pnl']:.2f}USDT"
 
     prompt = f"""
-    你是一位拥有15年经验的顶级加密货币量化交易员，你拥有INTJ 人格特征，是天生的系统构建者和长期规划者。并专精于BTC/USDT合约交易,善于洞察市场潜在机会吗，更懂得提前预知黑天鹅事件，并有效控制风险，目的是让资产最大化。请基于以下BTC/USDT {TRADE_CONFIG['timeframe']}周期数据进行分析：
+    你是一位拥有15年经验的顶级加密货币量化交易员，你拥有INTJ 人格特征，是天生的系统构建者和长期规划者。并专精于BTC/USDT合约交易,善于洞察市场潜在机会，更懂得提前预知黑天鹅事件，并有效控制风险，目的是让资产最大化。
+
+    【数据概览】
+    基于以下BTC/USDT {TRADE_CONFIG['timeframe']}周期数据进行分析：
 
     {kline_text}
 
@@ -657,6 +767,36 @@ def analyze_with_deepseek(price_data):
     - 当前持仓: {position_text}
     - 持仓盈亏: {(current_pos['unrealized_pnl'] if current_pos else 0):.2f} USDT
 
+    【思维链分析要求 - 请按以下步骤逐步分析】
+
+    **第一步：多空力量对比分析**
+    1. 分析最近5根K线的多空力量变化
+    2. 评估成交量与价格的关系（量价配合度）
+    3. 判断当前是多头主导还是空头主导
+    4. 识别是否有力量转换的迹象
+
+    **第二步：关键指标状态评估**
+    1. 均线系统：分析价格与各均线的关系，判断趋势强度
+    2. RSI指标：评估超买超卖状态和动量变化
+    3. MACD指标：分析趋势方向和动能强弱
+    4. 布林带：判断价格位置和波动性
+    5. 支撑阻力：识别关键价位和突破情况
+
+    **第三步：市场结构分析**
+    1. 趋势结构：判断当前处于趋势的哪个阶段
+    2. 波动特征：分析市场波动率和风险水平
+    3. 时间周期：考虑不同时间框架的共振情况
+    4. 市场情绪：基于技术指标推断市场情绪状态
+
+    **第四步：风险收益评估**
+    1. 当前信号的风险收益比
+    2. 止损止盈位置的合理性
+    3. 市场环境是否适合交易
+    4. 与历史信号的对比分析
+
+    **第五步：综合决策**
+    基于以上四步分析，给出最终的交易决策
+
     【防频繁交易重要原则】
     1. **趋势持续性优先**: 不要因单根K线或短期波动改变整体趋势判断
     2. **持仓稳定性**: 除非趋势明确强烈反转，否则保持现有持仓方向
@@ -665,7 +805,7 @@ def analyze_with_deepseek(price_data):
 
     【交易指导原则 - 必须遵守】
     1. **趋势跟随**: 明确趋势出现时立即行动，不要过度等待
-    2. 因为做的是btc，做多权重可以大一点点
+    2. **BTC特性**: 因为做的是BTC，做多权重可以适当增加
     3. **信号明确性**:
     - 强势上涨趋势 → BUY信号
     - 强势下跌趋势 → SELL信号  
@@ -674,19 +814,18 @@ def analyze_with_deepseek(price_data):
     - 趋势(均线排列) > RSI > MACD > 布林带
     - 价格突破关键支撑/阻力位是重要信号
 
-    【当前技术状况分析】
+    【当前技术状况快速参考】
     - 整体趋势: {price_data.get('trend_analysis', {}).get('overall', 'N/A') if price_data.get('trend_analysis') else 'N/A'}
     - 短期趋势: {price_data.get('trend_analysis', {}).get('short_term', 'N/A') if price_data.get('trend_analysis') else 'N/A'} 
     - RSI状态: {(price_data.get('technical_data', {}).get('rsi', 0) if price_data.get('technical_data') else 0):.1f} ({'超买' if (price_data.get('technical_data', {}).get('rsi', 0) if price_data.get('technical_data') else 0) > 70 else '超卖' if (price_data.get('technical_data', {}).get('rsi', 0) if price_data.get('technical_data') else 0) < 30 else '中性'})
     - MACD方向: {price_data.get('trend_analysis', {}).get('macd', 'N/A') if price_data.get('trend_analysis') else 'N/A'}
 
-    【分析要求】
-    基于以上分析，请给出明确的交易信号
+    【输出格式要求】
+    请严格按照以下JSON格式回复，reason字段必须包含完整的思维链分析过程：
 
-    请用以下JSON格式回复：
     {{
         "signal": "BUY|SELL|HOLD",
-        "reason": "简要分析理由(包含趋势判断和技术依据)",
+        "reason": "【思维链分析】第一步：多空力量对比...第二步：关键指标状态...第三步：市场结构分析...第四步：风险收益评估...第五步：综合决策...",
         "stop_loss": 具体价格,
         "take_profit": 具体价格, 
         "confidence": "HIGH|MEDIUM|LOW"
@@ -698,7 +837,27 @@ def analyze_with_deepseek(price_data):
             model="deepseek-chat",
             messages=[
                 {"role": "system",
-                 "content": f"您是一位拥有15年经验的顶级加密货币量化交易员，你拥有INTJ 人格特征，是天生的系统构建者和长期规划者。并专注于{TRADE_CONFIG['timeframe']}周期趋势分析。请结合K线形态和技术指标做出判断，并严格遵循JSON格式要求。"},
+                 "content": f"""您是一位拥有15年经验的顶级加密货币量化交易员，拥有INTJ人格特征，是天生的系统构建者和长期规划者。专注于{TRADE_CONFIG['timeframe']}周期趋势分析。
+
+【核心能力】
+- 深度技术分析：能够从多个维度分析市场
+- 结构化思维：按照思维链逐步分析问题
+- 风险控制：始终将风险控制放在首位
+- 逻辑推理：基于数据做出理性决策
+
+【分析要求】
+请严格按照思维链分析要求，逐步完成五个步骤的分析：
+1. 多空力量对比分析
+2. 关键指标状态评估  
+3. 市场结构分析
+4. 风险收益评估
+5. 综合决策
+
+【输出标准】
+- reason字段必须包含完整的五步思维链分析
+- 每个步骤都要有具体的分析内容
+- 最终决策要有明确的逻辑依据
+- 严格遵循JSON格式要求"""},
                 {"role": "user", "content": prompt}
             ],
             stream=False,
@@ -769,7 +928,7 @@ def analyze_with_deepseek(price_data):
 
 
 def execute_trade(signal_data, price_data):
-    """执行交易 - OKX版本（修复保证金检查）"""
+    """执行交易 - OKX版本（集成原子化止盈止损）"""
     global position
 
     current_position = get_current_position()
@@ -801,8 +960,8 @@ def execute_trade(signal_data, price_data):
     print(f"交易信号: {signal_data['signal']}")
     print(f"信心程度: {signal_data['confidence']}")
     print(f"理由: {signal_data['reason']}")
-    print(f"止损: ${signal_data['stop_loss']:,.2f}")
-    print(f"止盈: ${signal_data['take_profit']:,.2f}")
+    print(f"AI建议止损: ${signal_data['stop_loss']:,.2f}")
+    print(f"AI建议止盈: ${signal_data['take_profit']:,.2f}")
     print(f"当前持仓: {current_position}")
 
     # 风险管理：低信心信号不执行
@@ -840,11 +999,27 @@ def execute_trade(signal_data, price_data):
             print(f"⚠️ 保证金不足，跳过交易。需要: {required_margin:.2f} USDT, 可用: {usdt_balance:.2f} USDT")
             return
 
-        # 执行交易逻辑   tag 是我的经纪商api（不拿白不拿），不会影响大家返佣，介意可以删除
+        # 🆕 执行交易逻辑（集成止盈止损）
         if signal_data['signal'] == 'BUY':
+            side = 'long'
+            
+            # 🆕 动态计算止盈止损
+            stop_loss_price, take_profit_price = calculate_dynamic_stop_loss_take_profit(
+                signal_data, price_data, side, dynamic_leverage
+            )
+            
+            # 🆕 验证止盈止损价格
+            is_valid, validated_sl, validated_tp = validate_stop_loss_take_profit(
+                {'stop_loss': stop_loss_price, 'take_profit': take_profit_price}, 
+                price_data, side
+            )
+            
+            if not is_valid:
+                print("❌ 止盈止损验证失败，取消交易")
+                return
+            
             if current_position and current_position['side'] == 'short':
-                print("平空仓并开多仓...")
-                # 平空仓
+                print("平空仓...")
                 exchange.create_market_order(
                     TRADE_CONFIG['symbol'], 'buy', current_position['size'], 
                     None, {
@@ -853,30 +1028,53 @@ def execute_trade(signal_data, price_data):
                         'posSide': 'short'
                     }
                 )
-                time.sleep(1)
-                # 开多仓
-                exchange.create_market_order(
-                    TRADE_CONFIG['symbol'], 'buy', order_amount, None, {
-                        'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
-                        'posSide': 'long'
-                    }
-                )
-            elif current_position and current_position['side'] == 'long':
-                print("已有多头持仓，保持现状")
-            else:
-                # 无持仓时开多仓
-                print("开多仓...")
-                exchange.create_market_order(
-                    TRADE_CONFIG['symbol'], 'buy', order_amount, None, {
-                        'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
-                        'posSide': 'long'
-                    }
-                )
+                time.sleep(2)  # 等待平仓完成
+
+            print("开多仓并设置止盈止损...")
+            
+            # 🆕 构建带止盈止损的参数
+            params = {
+                'posSide': 'long',
+                'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
+                'slTriggerPx': f"{validated_sl:.2f}",      # 止损触发价格
+                'tpTriggerPx': f"{validated_tp:.2f}",       # 止盈触发价格
+                'slTriggerPxType': 'last',                  # 触发类型：最新成交价
+                'tpTriggerPxType': 'last'
+            }
+            
+            try:
+                order = exchange.create_market_order(TRADE_CONFIG['symbol'], 'buy', order_amount, None, params)
+                print(f"✅ 多单及止盈止损设置成功: {order.get('id', 'N/A')}")
+            except Exception as e:
+                print(f"❌ 带止盈止损下单失败: {e}")
+                print("尝试不带止盈止损下单...")
+                # 备用方案：不带止盈止损下单
+                exchange.create_market_order(TRADE_CONFIG['symbol'], 'buy', order_amount, None, {
+                    'posSide': 'long',
+                    'tdMode': TRADE_CONFIG.get('td_mode', 'cross')
+                })
+                print("✅ 多单下单成功（未设置止盈止损）")
 
         elif signal_data['signal'] == 'SELL':
+            side = 'short'
+            
+            # 🆕 动态计算止盈止损
+            stop_loss_price, take_profit_price = calculate_dynamic_stop_loss_take_profit(
+                signal_data, price_data, side, dynamic_leverage
+            )
+            
+            # 🆕 验证止盈止损价格
+            is_valid, validated_sl, validated_tp = validate_stop_loss_take_profit(
+                {'stop_loss': stop_loss_price, 'take_profit': take_profit_price}, 
+                price_data, side
+            )
+            
+            if not is_valid:
+                print("❌ 止盈止损验证失败，取消交易")
+                return
+            
             if current_position and current_position['side'] == 'long':
-                print("平多仓并开空仓...")
-                # 平多仓
+                print("平多仓...")
                 exchange.create_market_order(
                     TRADE_CONFIG['symbol'], 'sell', current_position['size'],
                     None, {
@@ -885,35 +1083,77 @@ def execute_trade(signal_data, price_data):
                         'posSide': 'long'
                     }
                 )
-                time.sleep(1)
-                # 开空仓
-                exchange.create_market_order(
-                    TRADE_CONFIG['symbol'], 'sell', order_amount, None, {
-                        'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
-                        'posSide': 'short'
-                    }
-                )
-            elif current_position and current_position['side'] == 'short':
-                print("已有空头持仓，保持现状")
-            else:
-                # 无持仓时开空仓
-                print("开空仓...")
-                exchange.create_market_order(
-                    TRADE_CONFIG['symbol'], 'sell', order_amount, None, {
-                        'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
-                        'posSide': 'short'
-                    }
-                )
+                time.sleep(2)  # 等待平仓完成
+            
+            print("开空仓并设置止盈止损...")
+            
+            # 🆕 构建带止盈止损的参数
+            params = {
+                'posSide': 'short',
+                'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
+                'slTriggerPx': f"{validated_sl:.2f}",      # 止损触发价格
+                'tpTriggerPx': f"{validated_tp:.2f}",       # 止盈触发价格
+                'slTriggerPxType': 'last',                  # 触发类型：最新成交价
+                'tpTriggerPxType': 'last'
+            }
+            
+            try:
+                order = exchange.create_market_order(TRADE_CONFIG['symbol'], 'sell', order_amount, None, params)
+                print(f"✅ 空单及止盈止损设置成功: {order.get('id', 'N/A')}")
+            except Exception as e:
+                print(f"❌ 带止盈止损下单失败: {e}")
+                print("尝试不带止盈止损下单...")
+                # 备用方案：不带止盈止损下单
+                exchange.create_market_order(TRADE_CONFIG['symbol'], 'sell', order_amount, None, {
+                    'posSide': 'short',
+                    'tdMode': TRADE_CONFIG.get('td_mode', 'cross')
+                })
+                print("✅ 空单下单成功（未设置止盈止损）")
+        
+        elif signal_data['signal'] == 'HOLD':
+            print("信号为HOLD，不执行任何交易")
 
-        print("订单执行成功")
-        time.sleep(2)
+        print("✅ 订单执行完成!")
+        time.sleep(3)
         position = get_current_position()
         print(f"更新后持仓: {position}")
 
     except Exception as e:
-        print(f"订单执行失败: {e}")
+        print(f"❌ 订单执行失败: {e}")
         import traceback
         traceback.print_exc()
+
+
+def check_stop_loss_take_profit_orders():
+    """检查止盈止损订单状态"""
+    try:
+        # 获取所有开放订单
+        orders = exchange.fetch_open_orders(TRADE_CONFIG['symbol'])
+        
+        stop_orders = []
+        for order in orders:
+            if order['type'] in ['stop_market', 'take_profit_market']:
+                stop_orders.append({
+                    'id': order['id'],
+                    'type': order['type'],
+                    'side': order['side'],
+                    'amount': order['amount'],
+                    'price': order.get('price', 'N/A'),
+                    'status': order['status']
+                })
+        
+        if stop_orders:
+            print(f"📋 当前止盈止损订单: {len(stop_orders)}个")
+            for order in stop_orders:
+                print(f"   - {order['type']}: {order['side']} {order['amount']} @ {order['price']}")
+        else:
+            print("📋 当前无止盈止损订单")
+            
+        return stop_orders
+        
+    except Exception as e:
+        print(f"检查止盈止损订单失败: {e}")
+        return []
 
 
 def analyze_with_deepseek_with_retry(price_data, max_retries=2):
@@ -1006,7 +1246,11 @@ def trading_bot():
     print(f"执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
 
-    # 1. 获取增强版K线数据
+    # 1. 检查当前止盈止损订单状态
+    print("🔍 检查当前止盈止损订单...")
+    check_stop_loss_take_profit_orders()
+
+    # 2. 获取增强版K线数据
     price_data = get_btc_ohlcv_enhanced()
     if not price_data:
         return
@@ -1015,20 +1259,24 @@ def trading_bot():
     print(f"数据周期: {TRADE_CONFIG['timeframe']}")
     print(f"价格变化: {price_data['price_change']:+.2f}%")
 
-    # 2. 使用DeepSeek分析（带重试）
+    # 3. 使用DeepSeek分析（带重试）
     signal_data = analyze_with_deepseek_with_retry(price_data)
 
     if signal_data.get('is_fallback', False):
         print("⚠️ 使用备用交易信号")
 
-    # 3. 执行交易
+    # 4. 执行交易（集成止盈止损）
     execute_trade(signal_data, price_data)
+    
+    # 5. 交易后再次检查止盈止损订单
+    print("🔍 交易后检查止盈止损订单...")
+    check_stop_loss_take_profit_orders()
 
 
 def main():
     """主函数"""
     print("BTC/USDT OKX自动交易机器人启动成功！")
-    print("融合技术指标策略 + OKX实盘接口")
+    print("融合技术指标策略 + OKX实盘接口 + 智能止盈止损")
 
     if TRADE_CONFIG['test_mode']:
         print("当前为模拟模式，不会真实下单")
@@ -1037,6 +1285,17 @@ def main():
 
     print(f"交易周期: {TRADE_CONFIG['timeframe']}")
     print("已启用完整技术指标分析和持仓跟踪功能")
+    print("🆕 已集成智能止盈止损功能：")
+    print("   - 动态计算止盈止损点位")
+    print("   - 下单时自动设置止盈止损")
+    print("   - 风险收益比1:2优化")
+    print("   - 根据信心程度和市场波动调整")
+    print("🧠 已优化AI分析能力：")
+    print("   - 思维链分析：五步结构化分析")
+    print("   - 多空力量对比分析")
+    print("   - 关键指标状态评估")
+    print("   - 市场结构深度分析")
+    print("   - 风险收益综合评估")
 
     # 设置交易所
     if not setup_exchange():
