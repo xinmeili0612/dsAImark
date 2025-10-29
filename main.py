@@ -79,6 +79,67 @@ signal_history = []
 position = None
 
 
+def cleanup_stop_loss_orders():
+    """清理所有止盈止损订单"""
+    try:
+        print("🔧 检查并清理现有止盈止损订单...")
+        open_orders = exchange.fetch_open_orders(TRADE_CONFIG['symbol'])
+        
+        cancelled_orders = []
+        for order in open_orders:
+            order_type = order.get('type', '')
+            order_id = order.get('id', '')
+            
+            # 检查是否是止盈止损相关订单
+            if order_type in ['stop_market', 'take_profit_market', 'conditional', 'trigger']:
+                try:
+                    exchange.cancel_order(order_id, TRADE_CONFIG['symbol'])
+                    cancelled_orders.append(order_id)
+                    print(f"✅ 已取消订单: {order_id} ({order_type})")
+                except Exception as cancel_e:
+                    print(f"⚠️ 取消订单失败: {order_id} - {cancel_e}")
+        
+        if cancelled_orders:
+            print(f"📋 已清理 {len(cancelled_orders)} 个止盈止损订单")
+            time.sleep(2)  # 等待订单取消完成
+            return True
+        else:
+            print("📋 当前无止盈止损订单需要清理")
+            return True
+            
+    except Exception as cleanup_e:
+        print(f"⚠️ 订单清理过程出错: {cleanup_e}")
+        return False
+
+
+def safe_set_leverage(leverage, symbol, mgn_mode='cross'):
+    """安全设置杠杆（先清理订单）"""
+    try:
+        # 先清理止盈止损订单
+        cleanup_stop_loss_orders()
+        
+        # 设置杠杆
+        print(f"🔧 设置杠杆: {leverage}倍...")
+        exchange.set_leverage(
+            leverage,
+            symbol,
+            {'mgnMode': mgn_mode}
+        )
+        print(f"✅ 杠杆设置成功: {leverage}倍")
+        return True
+        
+    except Exception as leverage_e:
+        print(f"⚠️ 杠杆设置失败: {leverage_e}")
+        try:
+            # 兼容旧版ccxt签名
+            exchange.set_leverage(leverage, symbol)
+            print(f"✅ 杠杆设置成功（兼容模式）: {leverage}倍")
+            return True
+        except Exception as legacy_e:
+            print(f"❌ 杠杆设置完全失败: {legacy_e}")
+            return False
+
+
 def setup_exchange():
     """设置交易所参数"""
     try:
@@ -116,20 +177,16 @@ def setup_exchange():
 
         # OKX设置杠杆（使用默认5倍作为初始杠杆）
         initial_leverage = 5
-        try:
-            # OKX设置杠杆需要指定保证金模式
-            exchange.set_leverage(
-                initial_leverage,
-                TRADE_CONFIG['symbol'],
-                {'mgnMode': TRADE_CONFIG.get('td_mode', 'cross')}
-            )
-        except Exception:
-            # 兼容旧版ccxt签名
-            exchange.set_leverage(
-                initial_leverage,
-                TRADE_CONFIG['symbol']
-            )
-        print(f"设置初始杠杆倍数: {initial_leverage}x（后续将根据AI动态调整）")
+        
+        # 🔧 使用安全杠杆设置函数
+        leverage_success = safe_set_leverage(
+            initial_leverage, 
+            TRADE_CONFIG['symbol'], 
+            TRADE_CONFIG.get('td_mode', 'cross')
+        )
+        
+        if not leverage_success:
+            print("⚠️ 将使用默认杠杆进行交易")
 
         # 获取余额
         balance = exchange.fetch_balance()
@@ -979,15 +1036,16 @@ def execute_trade(signal_data, price_data):
         
         # 🆕 动态设置杠杆
         print(f"🔧 设置动态杠杆: {dynamic_leverage}倍")
-        try:
-            exchange.set_leverage(
-                dynamic_leverage,
-                TRADE_CONFIG['symbol'],
-                {'mgnMode': TRADE_CONFIG.get('td_mode', 'cross')}
-            )
-            print(f"✅ 杠杆设置成功: {dynamic_leverage}倍")
-        except Exception as e:
-            print(f"⚠️ 杠杆设置失败，使用默认杠杆: {e}")
+        
+        # 🔧 使用安全杠杆设置函数
+        leverage_success = safe_set_leverage(
+            dynamic_leverage,
+            TRADE_CONFIG['symbol'],
+            TRADE_CONFIG.get('td_mode', 'cross')
+        )
+        
+        if not leverage_success:
+            print("⚠️ 杠杆设置失败，使用默认杠杆")
             dynamic_leverage = 5  # 使用默认杠杆
         
         # 获取账户余额进行最终检查
