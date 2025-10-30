@@ -73,6 +73,32 @@ TRADE_CONFIG = {
     }
 }
 
+# 交易节流与频次控制配置（可按波动分档自适应）
+TRADE_THROTTLE = {
+    'low_bb_width': 0.02,     # 低波动阈值（布林带宽占比）
+    'high_bb_width': 0.05,    # 高波动阈值
+    'low_atr_ratio': 0.015,   # 低波动阈值（ATR/Price）
+    'high_atr_ratio': 0.03,   # 高波动阈值
+
+    # 各分档参数（可回测微调）
+    'low':   {'persist': 3, 'cooldown': 6, 'min_move_atr': 1.0, 'max_trades_day': 2},
+    'mid':   {'persist': 2, 'cooldown': 4, 'min_move_atr': 0.8, 'max_trades_day': 5},
+    'high':  {'persist': 1, 'cooldown': 3, 'min_move_atr': 1.2, 'max_trades_day': 6},
+
+    # 杠杆/价格变化阈值
+    'leverage_tol': 0.5,  # 杠杆变化小于该值时不重新设置
+}
+
+# 最近交易信息（节流用）
+last_trade_info = {
+    'timestamp': None,
+    'bar_index': None,
+    'side': None,
+    'price': None,
+    'count_today': 0,
+    'date': None,
+}
+
 # 全局变量存储历史数据
 price_history = []
 signal_history = []
@@ -113,11 +139,8 @@ def cleanup_stop_loss_orders():
 
 
 def safe_set_leverage(leverage, symbol, mgn_mode='cross'):
-    """安全设置杠杆（先清理订单）"""
+    """更安全的杠杆设置：不强制清理止盈止损，仅在必要时设置"""
     try:
-        # 先清理止盈止损订单
-        cleanup_stop_loss_orders()
-        
         # 设置杠杆
         print(f"🔧 设置杠杆: {leverage}倍...")
         exchange.set_leverage(
@@ -389,6 +412,14 @@ def calculate_technical_indicators(df):
         df['bb_lower'] = df['bb_middle'] - (bb_std * 2)
         df['bb_position'] = (df['close'] - df['bb_lower']) / (df['bb_upper'] - df['bb_lower'])
 
+        # 真实波动范围与ATR(20)
+        high_low = df['high'] - df['low']
+        high_close_prev = (df['high'] - df['close'].shift(1)).abs()
+        low_close_prev = (df['low'] - df['close'].shift(1)).abs()
+        tr = pd.concat([high_low, high_close_prev, low_close_prev], axis=1).max(axis=1)
+        df['atr_20'] = tr.rolling(window=20, min_periods=1).mean()
+        df['atr_ratio'] = df['atr_20'] / df['close']
+
         # 成交量均线
         df['volume_ma'] = df['volume'].rolling(20).mean()
         df['volume_ratio'] = df['volume'] / df['volume_ma']
@@ -524,7 +555,9 @@ def get_btc_ohlcv_enhanced():
                 'bb_upper': current_data.get('bb_upper', 0),
                 'bb_lower': current_data.get('bb_lower', 0),
                 'bb_position': current_data.get('bb_position', 0),
-                'volume_ratio': current_data.get('volume_ratio', 0)
+                'volume_ratio': current_data.get('volume_ratio', 0),
+                'atr_20': current_data.get('atr_20', 0),
+                'atr_ratio': current_data.get('atr_ratio', 0)
             },
             'trend_analysis': trend_analysis,
             'levels_analysis': levels_analysis,
@@ -1011,6 +1044,94 @@ def execute_trade(signal_data, price_data):
 
     current_position = get_current_position()
 
+    # ========== 交易频次控制与同向处理（节流） ==========
+    # 波动分档选择参数
+    tech = price_data.get('technical_data', {})
+    bb_upper = tech.get('bb_upper', 0)
+    bb_lower = tech.get('bb_lower', 0)
+    atr_ratio = tech.get('atr_ratio', 0)
+    current_price = price_data['price']
+
+    bb_width_ratio = 0
+    if current_price > 0 and bb_upper and bb_lower:
+        bb_width_ratio = (bb_upper - bb_lower) / current_price
+
+    # 判定分档（优先ATR，其次BB宽度）
+    if atr_ratio and atr_ratio > 0:
+        if atr_ratio < TRADE_THROTTLE['low_atr_ratio']:
+            regime = 'low'
+        elif atr_ratio > TRADE_THROTTLE['high_atr_ratio']:
+            regime = 'high'
+        else:
+            regime = 'mid'
+    else:
+        if bb_width_ratio < TRADE_THROTTLE['low_bb_width']:
+            regime = 'low'
+        elif bb_width_ratio > TRADE_THROTTLE['high_bb_width']:
+            regime = 'high'
+        else:
+            regime = 'mid'
+
+    persist_need = TRADE_THROTTLE[regime]['persist']
+    cooldown_need = TRADE_THROTTLE[regime]['cooldown']
+    min_move_atr = TRADE_THROTTLE[regime]['min_move_atr']
+    max_trades_day = TRADE_THROTTLE[regime]['max_trades_day']
+
+    def _same_signal_persisted(required, desired):
+        if len(signal_history) < required:
+            return False
+        last = [s.get('signal') for s in signal_history[-required:]]
+        return all(sig == desired for sig in last)
+
+    def _in_cooldown(curr_bar, cooldown):
+        li = last_trade_info.get('bar_index')
+        if li is None:
+            return False
+        return (curr_bar - li) < cooldown
+
+    def _daily_quota_ok():
+        today = datetime.now().strftime('%Y-%m-%d')
+        if last_trade_info.get('date') != today:
+            last_trade_info['date'] = today
+            last_trade_info['count_today'] = 0
+        return last_trade_info['count_today'] < max_trades_day
+
+    def _min_move_ok(curr_price):
+        lp = last_trade_info.get('price')
+        atr = tech.get('atr_20', 0)
+        if not lp or not atr or atr <= 0:
+            return True
+        return abs(curr_price - lp) >= (min_move_atr * atr)
+
+    # bar索引（按15m整点）
+    curr_bar_index = int(datetime.now().timestamp() // (15 * 60))
+
+    desired_signal = signal_data['signal']
+    want_side = 'long' if desired_signal == 'BUY' else ('short' if desired_signal == 'SELL' else None)
+
+    # 同向已有持仓不加仓：仅维护止盈止损（后续按需可扩展加仓阈值）
+    if current_position and want_side and current_position['side'] == want_side:
+        print("已有同向持仓，默认不加仓，仅维护止盈止损（减少频繁交易）")
+        return
+
+    # 信号持久性
+    if want_side and not _same_signal_persisted(persist_need, desired_signal):
+        print("信号未达到持久性要求，跳过开仓")
+        return
+
+    # 冷却与日上限
+    if _in_cooldown(curr_bar_index, cooldown_need):
+        print("处于交易冷却期，跳过开仓")
+        return
+    if not _daily_quota_ok():
+        print("达到当日交易上限，跳过开仓")
+        return
+
+    # 最小变动阈值（基于ATR）
+    if not _min_move_ok(current_price):
+        print("价格变动不足（ATR阈值），跳过开仓")
+        return
+
     # 🔧 优化：放宽反转限制 - 趋势明确时允许MEDIUM信心执行
     if current_position and signal_data['signal'] != 'HOLD':
         current_side = current_position['side']
@@ -1086,15 +1207,18 @@ def execute_trade(signal_data, price_data):
             # 🆕 使用智能仓位计算（包含动态杠杆）
             order_amount, dynamic_leverage = calculate_intelligent_position(signal_data, price_data, current_position)
             
-            # 🆕 动态设置杠杆
-            print(f"🔧 设置动态杠杆: {dynamic_leverage}倍")
-            
-            # 🔧 使用安全杠杆设置函数
-            leverage_success = safe_set_leverage(
-                dynamic_leverage,
-                TRADE_CONFIG['symbol'],
-                TRADE_CONFIG.get('td_mode', 'cross')
-            )
+            # 🆕 动态设置杠杆（变化显著时才设置，避免触发不必要影响）
+            curr_lev = (current_position or {}).get('leverage')
+            if curr_lev is None or abs(dynamic_leverage - float(curr_lev)) >= TRADE_THROTTLE['leverage_tol']:
+                print(f"🔧 设置动态杠杆: {dynamic_leverage}倍")
+                leverage_success = safe_set_leverage(
+                    dynamic_leverage,
+                    TRADE_CONFIG['symbol'],
+                    TRADE_CONFIG.get('td_mode', 'cross')
+                )
+            else:
+                print("杠杆变化不显著，跳过设置杠杆")
+                leverage_success = True
             
             if not leverage_success:
                 print("⚠️ 杠杆设置失败，使用默认杠杆")
@@ -1209,15 +1333,18 @@ def execute_trade(signal_data, price_data):
             # 🆕 使用智能仓位计算（包含动态杠杆）
             order_amount, dynamic_leverage = calculate_intelligent_position(signal_data, price_data, current_position)
             
-            # 🆕 动态设置杠杆
-            print(f"🔧 设置动态杠杆: {dynamic_leverage}倍")
-            
-            # 🔧 使用安全杠杆设置函数
-            leverage_success = safe_set_leverage(
-                dynamic_leverage,
-                TRADE_CONFIG['symbol'],
-                TRADE_CONFIG.get('td_mode', 'cross')
-            )
+            # 🆕 动态设置杠杆（变化显著时才设置，避免触发不必要影响）
+            curr_lev = (current_position or {}).get('leverage')
+            if curr_lev is None or abs(dynamic_leverage - float(curr_lev)) >= TRADE_THROTTLE['leverage_tol']:
+                print(f"🔧 设置动态杠杆: {dynamic_leverage}倍")
+                leverage_success = safe_set_leverage(
+                    dynamic_leverage,
+                    TRADE_CONFIG['symbol'],
+                    TRADE_CONFIG.get('td_mode', 'cross')
+                )
+            else:
+                print("杠杆变化不显著，跳过设置杠杆")
+                leverage_success = True
             
             if not leverage_success:
                 print("⚠️ 杠杆设置失败，使用默认杠杆")
@@ -1334,6 +1461,19 @@ def execute_trade(signal_data, price_data):
         time.sleep(3)
         position = get_current_position()
         print(f"更新后持仓: {position}")
+
+        # 成功开仓后，更新节流状态
+        try:
+            if want_side in ['long', 'short']:
+                last_trade_info.update({
+                    'timestamp': price_data['timestamp'],
+                    'bar_index': curr_bar_index,
+                    'side': want_side,
+                    'price': current_price,
+                    'count_today': last_trade_info.get('count_today', 0) + 1,
+                })
+        except Exception as _:
+            pass
 
     except Exception as e:
         print(f"❌ 订单执行失败: {e}")
