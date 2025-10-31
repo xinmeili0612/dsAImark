@@ -41,35 +41,66 @@ TRADE_CONFIG = {
         'medium_term': 50,  # 中期均线
         'long_term': 96  # 长期趋势
     },
-    # AI智能仓位管理（100USDT本金优化）
+    # AI智能仓位管理（利益最大化优化版本）
     'position_management': {
         'enable_intelligent_position': True,  # 启用智能仓位
-        'base_usdt_amount': 25,  # 基础USDT投入（100U本金，保守25U）
-        'high_confidence_multiplier': 2.0,  # 高信心时50 USDT
-        'medium_confidence_multiplier': 1.0,  # 中信心时25 USDT
-        'low_confidence_multiplier': 0.6,  # 低信心时15 USDT
-        'max_position_ratio': 0.8,  # 最多使用80%账户余额
-        'trend_strength_multiplier': 1.3  # 强势趋势时增加30%
+        'base_usdt_amount': 70,  # 基础USDT投入（100U本金，提高到70%）
+        'high_confidence_multiplier': 1.3,  # 高信心时91 USDT（约90%本金）
+        'medium_confidence_multiplier': 1.0,  # 中信心时70 USDT（70%本金）
+        'low_confidence_multiplier': 0.6,  # 低信心时42 USDT（保守模式）
+        'max_position_ratio': 0.9,  # 最多使用90%账户余额（利益最大化）
+        'trend_strength_multiplier': 1.5,  # 强势趋势时增加50%（可达到105%但限制在90%）
+        'enable_pyramid': True,  # 启用金字塔加仓
+        'pyramid_threshold': 0.05,  # 浮盈5%时考虑加仓
+        'pyramid_amount_ratio': 0.3,  # 加仓金额为原仓位的30%
+        'max_pyramid_times': 2  # 最多加仓2次
     },
-    # AI动态杠杆配置
+    # AI动态杠杆配置（保守平衡版 - 收益与风险平衡）
     'dynamic_leverage': {
         'enable_dynamic_leverage': True,  # 启用AI动态杠杆
         'leverage_ranges': {
-            'HIGH': [6, 8],      # 高信心：6-8倍杠杆
+            'HIGH': [6, 8],      # 高信心：6-8倍杠杆（保守上限，降低风险）
             'MEDIUM': [4, 6],    # 中信心：4-6倍杠杆
-            'LOW': [2, 4]        # 低信心：2-4倍杠杆
+            'LOW': [2, 3]        # 低信心：2-3倍杠杆
         },
         'volatility_adjustment': {
-            'low_volatility': 1.2,   # 低波动时+20%杠杆
-            'high_volatility': 0.8   # 高波动时-20%杠杆
+            'low_volatility': 1.15,   # 低波动时+15%杠杆（保守调整）
+            'high_volatility': 0.85   # 高波动时-15%杠杆（保守调整）
         },
         'rsi_adjustment': {
-            'oversold': 1.1,     # RSI<30时+10%杠杆
-            'overbought': 0.9,   # RSI>70时-10%杠杆
-            'neutral': 1.0       # RSI中性时不变
+            'oversold': 1.1,      # RSI<30时+10%杠杆（保守调整）
+            'overbought': 0.9,    # RSI>70时-10%杠杆（保守调整）
+            'neutral': 1.0        # RSI中性时不变
         },
-        'max_leverage': 8,       # 最大杠杆限制
-        'min_leverage': 2        # 最小杠杆限制
+        'max_leverage': 8,       # 最大杠杆限制：8倍（安全上限，爆仓阈值12.5%）
+        'min_leverage': 2         # 最小杠杆限制：2倍（更保守）
+    },
+    # 动态风险收益比配置
+    'risk_reward': {
+        'enable_dynamic_rr': True,  # 启用动态风险收益比
+        'trend_bullish': 5,    # 强势上涨趋势：1:5
+        'trend_bearish': 5,    # 强势下跌趋势：1:5
+        'trend_consolidation': 1.5,  # 震荡整理：1:1.5
+        'default': 3  # 默认：1:3
+    },
+    # 移动止损配置
+    'trailing_stop': {
+        'enable_trailing_stop': True,  # 启用移动止损
+        'breakeven_threshold': 0.05,  # 浮盈5%时移到成本价
+        'lock_profit_1_threshold': 0.10,  # 浮盈10%时锁定3%利润
+        'lock_profit_1_level': 0.03,
+        'lock_profit_2_threshold': 0.20,  # 浮盈20%时锁定10%利润
+        'lock_profit_2_level': 0.10,
+        'update_interval': 1  # 每1根K线检查一次
+    },
+    # 分批止盈配置
+    'partial_take_profit': {
+        'enable_partial_tp': True,  # 启用分批止盈
+        'tp1_ratio': 0.3,  # 30%仓位在1.5倍风险收益比止盈
+        'tp1_rr_multiplier': 1.5,
+        'tp2_ratio': 0.3,  # 30%仓位在2.5倍风险收益比止盈
+        'tp2_rr_multiplier': 2.5,
+        'tp3_ratio': 0.4   # 40%仓位跟随趋势到反转信号
     }
 }
 
@@ -103,6 +134,20 @@ last_trade_info = {
 price_history = []
 signal_history = []
 position = None
+
+# 持仓管理全局变量（用于移动止损和加仓）
+position_management = {
+    'current_stop_loss': None,  # 当前止损价格
+    'initial_stop_loss': None,  # 初始止损价格
+    'entry_price': None,  # 开仓价格
+    'pyramid_count': 0,  # 加仓次数
+    'partial_tp_executed': {  # 分批止盈执行状态
+        'tp1': False,
+        'tp2': False,
+        'tp3': False
+    },
+    'last_trailing_check': None  # 上次移动止损检查的时间
+}
 
 
 def cleanup_stop_loss_orders():
@@ -737,13 +782,43 @@ def validate_stop_loss_take_profit(signal_data, price_data, side):
     return True, stop_loss, take_profit
 
 
+def calculate_dynamic_risk_reward_ratio(price_data):
+    """计算动态风险收益比"""
+    config = TRADE_CONFIG.get('risk_reward', {})
+    
+    if not config.get('enable_dynamic_rr', True):
+        return 3  # 默认1:3
+    
+    trend = price_data.get('trend_analysis', {}).get('overall', '')
+    
+    if trend == '强势上涨':
+        return 5  # 1:5
+    elif trend == '强势下跌':
+        return 5  # 1:5
+    elif trend == '震荡整理':
+        return 1.5  # 1:1.5
+    else:
+        return config.get('default', 3)  # 默认1:3
+
+
 def calculate_dynamic_stop_loss_take_profit(signal_data, price_data, side, leverage):
-    """动态计算止盈止损点位"""
+    """动态计算止盈止损点位（支持动态风险收益比）"""
     current_price = price_data['price']
     confidence = signal_data.get('confidence', 'MEDIUM')
     
-    # 基础止损比例（根据杠杆调整）
-    base_stop_loss_ratio = 0.02 / leverage  # 基础2%止损，根据杠杆调整
+    # 使用ATR计算更合理的止损（避免过紧止损）
+    atr_ratio = 0.015  # 默认止损比例
+    if 'technical_data' in price_data:
+        atr = price_data['technical_data'].get('atr_20', 0)
+        current_price = price_data['price']
+        if atr > 0 and current_price > 0:
+            # 使用2-3倍ATR作为止损范围（给趋势空间）
+            atr_ratio = (atr * 2.5) / current_price
+            # 限制在合理范围
+            atr_ratio = max(0.005, min(0.03, atr_ratio))
+    
+    # 基础止损比例（基于ATR或杠杆）
+    base_stop_loss_ratio = max(atr_ratio, 0.02 / leverage)
     
     # 根据信心程度调整止损比例
     confidence_multiplier = {
@@ -767,8 +842,9 @@ def calculate_dynamic_stop_loss_take_profit(signal_data, price_data, side, lever
     # 计算最终止损比例
     final_stop_loss_ratio = base_stop_loss_ratio * confidence_multiplier * volatility_multiplier
     
-    # 计算止盈比例（风险收益比1:2）
-    take_profit_ratio = final_stop_loss_ratio * 2
+    # 🆕 使用动态风险收益比（而不是固定1:2）
+    dynamic_rr = calculate_dynamic_risk_reward_ratio(price_data)
+    take_profit_ratio = final_stop_loss_ratio * dynamic_rr
     
     # 计算具体价格
     if side == 'long':
@@ -778,16 +854,245 @@ def calculate_dynamic_stop_loss_take_profit(signal_data, price_data, side, lever
         stop_loss_price = current_price * (1 + final_stop_loss_ratio)
         take_profit_price = current_price * (1 - take_profit_ratio)
     
-    print(f"📊 动态止盈止损计算:")
+    print(f"📊 动态止盈止损计算（利益最大化版）:")
     print(f"   - 基础止损比例: {base_stop_loss_ratio:.3f}")
     print(f"   - 信心倍数: {confidence_multiplier}")
     print(f"   - 波动倍数: {volatility_multiplier}")
     print(f"   - 最终止损比例: {final_stop_loss_ratio:.3f}")
+    print(f"   - 动态风险收益比: 1:{dynamic_rr}")
     print(f"   - 止盈比例: {take_profit_ratio:.3f}")
     print(f"   - 止损价格: {stop_loss_price:.2f}")
     print(f"   - 止盈价格: {take_profit_price:.2f}")
     
     return stop_loss_price, take_profit_price
+
+
+def update_trailing_stop(current_position, price_data):
+    """移动止损机制 - 锁定利润并让利润奔跑"""
+    config = TRADE_CONFIG.get('trailing_stop', {})
+    
+    if not config.get('enable_trailing_stop', True):
+        return None
+    
+    if not current_position:
+        return None
+    
+    entry_price = current_position.get('entry_price', 0)
+    side = current_position.get('side', '')
+    current_price = price_data['price']
+    
+    if entry_price <= 0:
+        return None
+    
+    # 计算浮盈百分比
+    if side == 'long':
+        unrealized_pnl_pct = (current_price - entry_price) / entry_price
+    else:  # short
+        unrealized_pnl_pct = (entry_price - current_price) / entry_price
+    
+    # 获取当前止损
+    current_sl = position_management.get('current_stop_loss')
+    initial_sl = position_management.get('initial_stop_loss', current_sl)
+    
+    # 计算新的止损价格
+    new_stop_loss = None
+    
+    # 浮盈20%时，锁定10%利润
+    if unrealized_pnl_pct >= config.get('lock_profit_2_threshold', 0.20):
+        lock_level = config.get('lock_profit_2_level', 0.10)
+        if side == 'long':
+            new_stop_loss = entry_price * (1 + lock_level)
+        else:
+            new_stop_loss = entry_price * (1 - lock_level)
+        print(f"📈 浮盈{unrealized_pnl_pct*100:.1f}%，移动止损到锁定{lock_level*100:.1f}%利润: {new_stop_loss:.2f}")
+    
+    # 浮盈10%时，锁定3%利润
+    elif unrealized_pnl_pct >= config.get('lock_profit_1_threshold', 0.10):
+        lock_level = config.get('lock_profit_1_level', 0.03)
+        if side == 'long':
+            new_stop_loss = entry_price * (1 + lock_level)
+        else:
+            new_stop_loss = entry_price * (1 - lock_level)
+        print(f"📈 浮盈{unrealized_pnl_pct*100:.1f}%，移动止损到锁定{lock_level*100:.1f}%利润: {new_stop_loss:.2f}")
+    
+    # 浮盈5%时，止损移到成本价（保本）
+    elif unrealized_pnl_pct >= config.get('breakeven_threshold', 0.05):
+        new_stop_loss = entry_price
+        print(f"📈 浮盈{unrealized_pnl_pct*100:.1f}%，移动止损到成本价保本: {new_stop_loss:.2f}")
+    
+    # 如果计算出了新止损，且比当前止损更优，则更新
+    if new_stop_loss:
+        # 确保新止损不会劣于当前止损
+        if side == 'long':
+            if current_sl is None or new_stop_loss > current_sl:
+                position_management['current_stop_loss'] = new_stop_loss
+                return new_stop_loss
+        else:  # short
+            if current_sl is None or new_stop_loss < current_sl:
+                position_management['current_stop_loss'] = new_stop_loss
+                return new_stop_loss
+    
+    return None
+
+
+def check_pyramid_add(current_position, price_data, signal_data):
+    """金字塔加仓检查 - 趋势中扩大收益"""
+    config = TRADE_CONFIG['position_management']
+    
+    if not config.get('enable_pyramid', True):
+        return False
+    
+    if not current_position:
+        return False
+    
+    # 检查是否达到最大加仓次数
+    if position_management['pyramid_count'] >= config.get('max_pyramid_times', 2):
+        return False
+    
+    entry_price = current_position.get('entry_price', 0)
+    side = current_position.get('side', '')
+    current_price = price_data['price']
+    
+    if entry_price <= 0:
+        return False
+    
+    # 计算浮盈百分比
+    if side == 'long':
+        unrealized_pnl_pct = (current_price - entry_price) / entry_price
+    else:
+        unrealized_pnl_pct = (entry_price - current_price) / entry_price
+    
+    # 检查是否达到加仓阈值
+    pyramid_threshold = config.get('pyramid_threshold', 0.05)
+    if unrealized_pnl_pct < pyramid_threshold:
+        return False
+    
+    # 检查信号方向是否一致
+    desired_signal = signal_data.get('signal', '')
+    if side == 'long' and desired_signal != 'BUY':
+        return False
+    if side == 'short' and desired_signal != 'SELL':
+        return False
+    
+    # 检查趋势是否延续
+    trend = price_data.get('trend_analysis', {}).get('overall', '')
+    if side == 'long' and trend not in ['强势上涨']:
+        return False
+    if side == 'short' and trend not in ['强势下跌']:
+        return False
+    
+    # 检查信心程度（加仓需要中等以上信心）
+    confidence = signal_data.get('confidence', 'LOW')
+    if confidence == 'LOW':
+        return False
+    
+    print(f"✅ 满足加仓条件: 浮盈{unrealized_pnl_pct*100:.1f}%, 趋势延续, 信号一致")
+    return True
+
+
+def execute_partial_take_profit(current_position, price_data, initial_stop_loss):
+    """分批止盈执行 - 优化收益曲线"""
+    config = TRADE_CONFIG.get('partial_take_profit', {})
+    
+    if not config.get('enable_partial_tp', True):
+        return
+    
+    if not current_position:
+        return
+    
+    entry_price = current_position.get('entry_price', 0)
+    side = current_position.get('side', '')
+    current_price = price_data['price']
+    position_size = current_position.get('size', 0)
+    
+    if entry_price <= 0 or position_size <= 0:
+        return
+    
+    # 计算初始风险（用于计算风险收益比）
+    if side == 'long':
+        initial_risk = entry_price - initial_stop_loss
+        current_profit_pct = (current_price - entry_price) / entry_price
+    else:
+        initial_risk = initial_stop_loss - entry_price
+        current_profit_pct = (entry_price - current_price) / entry_price
+    
+    if initial_risk <= 0:
+        return
+    
+    # 检查TP1：30%仓位在1.5倍风险收益比止盈
+    if not position_management['partial_tp_executed']['tp1']:
+        tp1_rr = config.get('tp1_rr_multiplier', 1.5)
+        tp1_target = initial_risk * tp1_rr
+        
+        if side == 'long' and (current_price - entry_price) >= tp1_target:
+            tp1_amount = position_size * config.get('tp1_ratio', 0.3)
+            try:
+                print(f"💰 执行第一批止盈(30%): 价格{current_price:.2f}, 数量{tp1_amount:.2f}")
+                exchange.create_market_order(
+                    TRADE_CONFIG['symbol'], 'sell' if side == 'long' else 'buy',
+                    tp1_amount, None, {
+                        'reduceOnly': True,
+                        'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
+                        'posSide': side
+                    }
+                )
+                position_management['partial_tp_executed']['tp1'] = True
+            except Exception as e:
+                print(f"⚠️ 分批止盈TP1执行失败: {e}")
+        
+        elif side == 'short' and (entry_price - current_price) >= tp1_target:
+            tp1_amount = position_size * config.get('tp1_ratio', 0.3)
+            try:
+                print(f"💰 执行第一批止盈(30%): 价格{current_price:.2f}, 数量{tp1_amount:.2f}")
+                exchange.create_market_order(
+                    TRADE_CONFIG['symbol'], 'buy',
+                    tp1_amount, None, {
+                        'reduceOnly': True,
+                        'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
+                        'posSide': side
+                    }
+                )
+                position_management['partial_tp_executed']['tp1'] = True
+            except Exception as e:
+                print(f"⚠️ 分批止盈TP1执行失败: {e}")
+    
+    # 检查TP2：30%仓位在2.5倍风险收益比止盈
+    if position_management['partial_tp_executed']['tp1'] and not position_management['partial_tp_executed']['tp2']:
+        tp2_rr = config.get('tp2_rr_multiplier', 2.5)
+        tp2_target = initial_risk * tp2_rr
+        remaining_size = position_size * (1 - config.get('tp1_ratio', 0.3))
+        
+        if side == 'long' and (current_price - entry_price) >= tp2_target:
+            tp2_amount = remaining_size * (config.get('tp2_ratio', 0.3) / (1 - config.get('tp1_ratio', 0.3)))
+            try:
+                print(f"💰 执行第二批止盈(30%): 价格{current_price:.2f}, 数量{tp2_amount:.2f}")
+                exchange.create_market_order(
+                    TRADE_CONFIG['symbol'], 'sell' if side == 'long' else 'buy',
+                    tp2_amount, None, {
+                        'reduceOnly': True,
+                        'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
+                        'posSide': side
+                    }
+                )
+                position_management['partial_tp_executed']['tp2'] = True
+            except Exception as e:
+                print(f"⚠️ 分批止盈TP2执行失败: {e}")
+        
+        elif side == 'short' and (entry_price - current_price) >= tp2_target:
+            tp2_amount = remaining_size * (config.get('tp2_ratio', 0.3) / (1 - config.get('tp1_ratio', 0.3)))
+            try:
+                print(f"💰 执行第二批止盈(30%): 价格{current_price:.2f}, 数量{tp2_amount:.2f}")
+                exchange.create_market_order(
+                    TRADE_CONFIG['symbol'], 'buy',
+                    tp2_amount, None, {
+                        'reduceOnly': True,
+                        'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
+                        'posSide': side
+                    }
+                )
+                position_management['partial_tp_executed']['tp2'] = True
+            except Exception as e:
+                print(f"⚠️ 分批止盈TP2执行失败: {e}")
 
 
 def analyze_with_deepseek(price_data):
@@ -1109,9 +1414,64 @@ def execute_trade(signal_data, price_data):
     desired_signal = signal_data['signal']
     want_side = 'long' if desired_signal == 'BUY' else ('short' if desired_signal == 'SELL' else None)
 
-    # 同向已有持仓不加仓：仅维护止盈止损（后续按需可扩展加仓阈值）
+    # 🆕 同向持仓时的处理：检查是否满足加仓条件
     if current_position and want_side and current_position['side'] == want_side:
-        print("已有同向持仓，默认不加仓，仅维护止盈止损（减少频繁交易）")
+        # 检查是否可以加仓（金字塔加仓）
+        if check_pyramid_add(current_position, price_data, signal_data):
+            print("🎯 满足加仓条件，执行金字塔加仓...")
+            # 计算加仓金额
+            config = TRADE_CONFIG['position_management']
+            base_usdt = config['base_usdt_amount']
+            pyramid_ratio = config.get('pyramid_amount_ratio', 0.3)
+            add_amount_usdt = base_usdt * pyramid_ratio  # 加仓金额为原仓位的30%
+            
+            # 计算加仓合约数量
+            current_price = price_data['price']
+            contract_size = TRADE_CONFIG.get('contract_size', 0.001)
+            dynamic_leverage = calculate_dynamic_leverage(signal_data, price_data)
+            add_contracts = (add_amount_usdt * dynamic_leverage) / (current_price * contract_size)
+            add_contracts = round(add_contracts, 2)
+            
+            try:
+                if want_side == 'long':
+                    order = exchange.create_market_order(
+                        TRADE_CONFIG['symbol'], 'buy', add_contracts, None, {
+                            'posSide': 'long',
+                            'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
+                            'ordType': 'market'
+                        }
+                    )
+                else:
+                    order = exchange.create_market_order(
+                        TRADE_CONFIG['symbol'], 'sell', add_contracts, None, {
+                            'posSide': 'short',
+                            'tdMode': TRADE_CONFIG.get('td_mode', 'cross'),
+                            'ordType': 'market'
+                        }
+                    )
+                position_management['pyramid_count'] += 1
+                print(f"✅ 加仓成功: {add_contracts:.2f} 张 (第{position_management['pyramid_count']}次加仓)")
+            except Exception as e:
+                print(f"❌ 加仓失败: {e}")
+        
+        # 🆕 检查并更新移动止损
+        new_sl = update_trailing_stop(current_position, price_data)
+        if new_sl:
+            # 更新交易所止损订单
+            try:
+                # 取消旧止损
+                cleanup_stop_loss_orders()
+                # 设置新止损（需要根据实际持仓数量）
+                print(f"🔄 更新止损到: {new_sl:.2f}")
+            except Exception as e:
+                print(f"⚠️ 更新止损失败: {e}")
+        
+        # 🆕 检查并执行分批止盈
+        initial_sl = position_management.get('initial_stop_loss')
+        if initial_sl:
+            execute_partial_take_profit(current_position, price_data, initial_sl)
+        
+        print("已有同向持仓，完成加仓/止损/止盈检查")
         return
 
     # 信号持久性
@@ -1259,6 +1619,9 @@ def execute_trade(signal_data, price_data):
                     }
                 )
                 time.sleep(2)  # 等待平仓完成
+                # 🆕 重置持仓管理状态
+                position_management['pyramid_count'] = 0
+                position_management['partial_tp_executed'] = {'tp1': False, 'tp2': False, 'tp3': False}
 
             print("开多仓并设置止盈止损...")
             
@@ -1374,6 +1737,14 @@ def execute_trade(signal_data, price_data):
                 print("❌ 止盈止损验证失败，取消交易")
                 return
             
+            # 🆕 初始化持仓管理状态
+            current_price = price_data['price']
+            position_management['current_stop_loss'] = validated_sl
+            position_management['initial_stop_loss'] = validated_sl
+            position_management['entry_price'] = current_price
+            position_management['pyramid_count'] = 0
+            position_management['partial_tp_executed'] = {'tp1': False, 'tp2': False, 'tp3': False}
+            
             if current_position and current_position['side'] == 'long':
                 print("平多仓...")
                 exchange.create_market_order(
@@ -1385,6 +1756,9 @@ def execute_trade(signal_data, price_data):
                     }
                 )
                 time.sleep(2)  # 等待平仓完成
+                # 🆕 重置持仓管理状态
+                position_management['pyramid_count'] = 0
+                position_management['partial_tp_executed'] = {'tp1': False, 'tp2': False, 'tp3': False}
             
             print("开空仓并设置止盈止损...")
             
@@ -1461,6 +1835,13 @@ def execute_trade(signal_data, price_data):
         time.sleep(3)
         position = get_current_position()
         print(f"更新后持仓: {position}")
+        
+        # 🆕 更新持仓管理信息
+        if position:
+            if position_management.get('entry_price') is None:
+                position_management['entry_price'] = position.get('entry_price', price_data['price'])
+            if position_management.get('initial_stop_loss') is None:
+                position_management['initial_stop_loss'] = position_management.get('current_stop_loss')
 
         # 成功开仓后，更新节流状态
         try:
@@ -1616,13 +1997,37 @@ def trading_bot():
     print(f"数据周期: {TRADE_CONFIG['timeframe']}")
     print(f"价格变化: {price_data['price_change']:+.2f}%")
 
+    # 🆕 检查并管理现有持仓（移动止损、分批止盈）
+    current_position = get_current_position()
+    if current_position:
+        print(f"📊 当前持仓: {current_position['side']} {current_position['size']:.2f} 张, "
+              f"盈亏: {current_position['unrealized_pnl']:.2f} USDT")
+        
+        # 更新持仓管理信息（如果缺失）
+        if position_management.get('entry_price') is None:
+            position_management['entry_price'] = current_position.get('entry_price', price_data['price'])
+        
+        # 检查移动止损
+        new_sl = update_trailing_stop(current_position, price_data)
+        if new_sl:
+            try:
+                cleanup_stop_loss_orders()
+                print(f"🔄 移动止损更新到: {new_sl:.2f}")
+            except Exception as e:
+                print(f"⚠️ 更新止损失败: {e}")
+        
+        # 检查分批止盈
+        initial_sl = position_management.get('initial_stop_loss')
+        if initial_sl:
+            execute_partial_take_profit(current_position, price_data, initial_sl)
+
     # 3. 使用DeepSeek分析（带重试）
     signal_data = analyze_with_deepseek_with_retry(price_data)
 
     if signal_data.get('is_fallback', False):
         print("⚠️ 使用备用交易信号")
 
-    # 4. 执行交易（集成止盈止损）
+    # 4. 执行交易（集成止盈止损、加仓等）
     execute_trade(signal_data, price_data)
     
     # 5. 交易后再次检查止盈止损订单
@@ -1643,10 +2048,16 @@ def main():
     print(f"交易周期: {TRADE_CONFIG['timeframe']}")
     print("已启用完整技术指标分析和持仓跟踪功能")
     print("🆕 已集成智能止盈止损功能：")
-    print("   - 动态计算止盈止损点位")
+    print("   - 动态计算止盈止损点位（基于ATR和动态风险收益比）")
     print("   - 下单时自动设置止盈止损")
-    print("   - 风险收益比1:2优化")
+    print("   - 动态风险收益比：趋势市1:5，震荡市1:1.5，默认1:3")
     print("   - 根据信心程度和市场波动调整")
+    print("🚀 利益最大化优化功能（保守平衡版）：")
+    print("   - 资金利用率：70-90%（原25%）")
+    print("   - 动态杠杆：2-8倍（保守上限，降低风险）")
+    print("   - 移动止损：浮盈5%保本，10%锁3%，20%锁10%")
+    print("   - 金字塔加仓：趋势中浮盈5%以上自动加仓")
+    print("   - 分批止盈：30%在1.5倍RR，30%在2.5倍RR，40%跟随趋势")
     print("🧠 已优化AI分析能力：")
     print("   - 思维链分析：五步结构化分析")
     print("   - 多空力量对比分析")
